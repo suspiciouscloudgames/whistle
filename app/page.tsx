@@ -559,7 +559,7 @@ export default function Home() {
             </button>
           </div>
           <div className="file-actions">
-            <button onClick={() => setNewDialog(true)}>{t("새 세계")}</button>
+            <button onClick={() => setNewDialog(true)}>{t("다시 시작")}</button>
             <button onClick={() => file.current?.click()}>
               {t("불러오기")}
             </button>
@@ -1046,13 +1046,14 @@ export default function Home() {
         />
       )}
       {newDialog && (
-        <Dialog title={t("새 세계")} onClose={() => setNewDialog(false)}>
+        <Dialog title={t("다시 시작")} onClose={() => setNewDialog(false)}>
+          <p>{t("지금 만든 세계를 지우고 새로 시작할까요?")}</p>
           <div className="new-actions">
             <button onClick={() => downloadWorld(world)}>
               {t("현재 파일 저장")}
             </button>
             <button className="primary" onClick={newWorld}>
-              {t("새 지형 열기")}
+              {t("다시 시작")}
             </button>
           </div>
         </Dialog>

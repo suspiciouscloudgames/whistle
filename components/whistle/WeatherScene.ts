@@ -19,7 +19,7 @@ export function makeWeather(size: number) {
   const cloudMap = new THREE.CanvasTexture(cloudCanvas);
   const clouds = new THREE.Group();
   for (let i = 0; i < 9; i++) {
-    const material = new THREE.SpriteMaterial({ map: cloudMap, transparent: true, depthWrite: false, fog: false, opacity: .65 });
+    const material = new THREE.SpriteMaterial({ map: cloudMap, transparent: true, depthWrite: false, fog: false, opacity: .48 });
     const sprite = new THREE.Sprite(material);
     const angle = i * Math.PI * 2 / 9;
     sprite.position.set(Math.cos(angle) * (size + 8), 6 + random()*3, Math.sin(angle) * (size + 8));
