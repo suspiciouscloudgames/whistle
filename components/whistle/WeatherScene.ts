@@ -21,9 +21,16 @@ export function makeWeather(size: number) {
   for (let i = 0; i < 9; i++) {
     const material = new THREE.SpriteMaterial({ map: cloudMap, transparent: true, depthWrite: false, fog: false, opacity: .48 });
     const sprite = new THREE.Sprite(material);
-    const angle = i * Math.PI * 2 / 9;
-    sprite.position.set(Math.cos(angle) * (size + 8), 6 + random()*3, Math.sin(angle) * (size + 8));
-    sprite.scale.set(17 + random()*8, 6 + random()*3, 1);
+    // Stagger apparent altitude as well as distance so clouds do not form a ring.
+    const angle = (i + (random() - .5) * .7) * Math.PI * 2 / 9;
+    const distance = size + 6 + random() * 18;
+    const elevation = .12 + ((i * 5) % 9) / 8 * .5 + random() * .08;
+    sprite.position.set(
+      Math.cos(angle) * distance,
+      2 + Math.tan(elevation) * distance,
+      Math.sin(angle) * distance,
+    );
+    sprite.scale.set(13 + random()*11, 3.5 + random()*3, 1);
     clouds.add(sprite);
   }
   group.add(clouds);
