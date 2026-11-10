@@ -97,6 +97,16 @@ p {
   padding: 8px 16px;
   font-size: 12px;
 }
+.view-tabs .play-tab {
+  background: transparent;
+  color: #111;
+  opacity: .65;
+}
+.view-tabs .play-tab.active {
+  text-decoration: underline;
+  text-underline-offset: 7px;
+  text-decoration-thickness: 1px;
+}
 .file-actions {
   display: flex;
   margin-left: auto;
@@ -494,52 +504,50 @@ p {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: max(16px, env(safe-area-inset-bottom));
+  bottom: max(12px, env(safe-area-inset-bottom));
   display: grid;
-  grid-template-columns: repeat(3, 44px);
-  grid-template-rows: repeat(2, 40px);
-  gap: 0;
-  padding: 3px;
-  background: #ffffffc9;
-  border: 1px solid #ddd;
-  border-radius: 18px;
+  grid-template-columns: 44px 64px 44px;
+  grid-template-rows: 36px 64px 36px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #111;
+  filter: drop-shadow(0 0 2px #ffffffb3);
 }
-.touch-controls > button {
+.touch-controls button {
   border: 0;
   background: transparent;
-  color: #555;
+  color: inherit;
   touch-action: none;
   user-select: none;
   -webkit-touch-callout: none;
   padding: 0;
-  border-radius: 12px;
   display: grid;
   place-items: center;
+  opacity: .65;
 }
-.touch-controls > button span {
-  font:
-    20px/1 Arial,
-    sans-serif;
-}
-.touch-controls > button:active {
-  background: #e6e6e6;
-  color: #111;
-}
-.direction-forward {
-  grid-column: 2;
-}
-.direction-left {
-  grid-column: 1;
-  grid-row: 2;
-}
-.direction-back {
+.touch-controls > button span { font: 23px/1 Arial, sans-serif; }
+.touch-controls button:active { opacity: 1; }
+.touch-controls button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.direction-forward { grid-column: 2; grid-row: 1; }
+.direction-left { grid-column: 1; grid-row: 2; }
+.direction-back { grid-column: 2; grid-row: 3; }
+.direction-right { grid-column: 3; grid-row: 2; }
+.movement-modes {
   grid-column: 2;
   grid-row: 2;
+  width: 64px;
+  height: 64px;
+  border: 1px solid #1119;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
 }
-.direction-right {
-  grid-column: 3;
-  grid-row: 2;
-}
+.movement-modes button { width: 100%; border-radius: 0; }
+.movement-modes button + button { border-top: 1px solid #1119; }
+.movement-modes button[aria-pressed="true"] { background: #111b; color: #fff; opacity: 1; }
+.movement-modes svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .dialog {
   width: min(420px, calc(100vw - 32px));
   padding: 0;

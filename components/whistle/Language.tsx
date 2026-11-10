@@ -64,6 +64,8 @@ const english: Record<string, string> = {
     "You can create up to 40 object types.",
   "6MB 이하의 세계 파일을 선택해 주세요.": "Choose a world file under 6 MB.",
   "세계 파일을 읽을 수 없어요.": "Could not read the world file.",
+  "점프 · 빠르게": "Jump · move faster",
+  "숙이기 · 천천히": "Crouch · move slower",
   "이동 터치패드": "Movement pad",
   앞으로: "Forward",
   뒤로: "Back",

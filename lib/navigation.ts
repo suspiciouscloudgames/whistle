@@ -55,3 +55,19 @@ export function blocksGroundStep(
     Math.abs(next - current) > Math.max(0.23, distance * 5)
   );
 }
+
+/** One jump on activation; running remains enabled after landing. */
+export function jumpFrame(origin: number, elapsed: number) {
+  const t = Math.max(0, elapsed);
+  return { y: origin + 4 * t - 5 * t * t, descending: t >= 0.4 };
+}
+export function movementProfile(running: boolean, crouching: boolean) {
+  return crouching
+    ? { speed: 0.45, eyeHeight: 0.82 }
+    : { speed: running ? 1.65 : 1, eyeHeight: 1.35 };
+}
+
+/** In the air, ground below the feet must not block horizontal motion. */
+export function blocksAirStep(feet: number, next: number | null) {
+  return next !== null && next > feet + 0.23;
+}

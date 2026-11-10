@@ -9,6 +9,9 @@ import { deriveStructures, floorHeight, tileAt, SURFACES } from "@/lib/terrain";
 import { environmentAt } from "@/lib/environment";
 import { daylightAt } from "@/lib/daylight";
 import {
+  blocksAirStep,
+  jumpFrame,
+  movementProfile,
   followHeading,
   movementKey,
   fallFrame,
@@ -24,6 +27,7 @@ type Props = {
   simulation: Simulation;
   mode: "overview" | "play";
   onPlayer?: (p: Player) => void;
+  onControlsReset?: () => void;
   controls?: MutableRefObject<Set<string>>;
   className?: string;
   feedback?: PlacementFeedback | null;
@@ -106,6 +110,7 @@ export default function Scene({
   simulation,
   mode,
   onPlayer,
+  onControlsReset,
   controls,
   className = "",
   feedback = null,
@@ -114,6 +119,8 @@ export default function Scene({
   const { t } = useLanguage();
   const feedbackRef = useRef(feedback);
   feedbackRef.current = feedback;
+  const resetControls = useRef(onControlsReset);
+  resetControls.current = onControlsReset;
   const clockRef = useRef(clock);
   clockRef.current = clock;
   const host = useRef<HTMLDivElement>(null),
@@ -219,6 +226,7 @@ export default function Scene({
     };
     const player: Player = { ...world.start, yaw: 0 };
     let falling: { originY: number; elapsed: number } | null = null;
+    let jump: { origin: number; elapsed: number } | null = null;
     let respawnFade = 0;
     let pitch = -0.12,
       targetPitch = pitch,
@@ -330,11 +338,14 @@ export default function Scene({
     ro.observe(el);
     resize();
     const blocked = (x: number, z: number) =>
-      blocksGroundStep(
-        floorHeight(worldRef.current, player.x, player.z, structures),
-        floorHeight(worldRef.current, x, z, structures),
-        Math.hypot(x - player.x, z - player.z),
-      ) ||
+      (jump
+        ? blocksAirStep(jumpFrame(jump.origin, jump.elapsed).y,
+            floorHeight(worldRef.current, x, z, structures))
+        : blocksGroundStep(
+            floorHeight(worldRef.current, player.x, player.z, structures),
+            floorHeight(worldRef.current, x, z, structures),
+            Math.hypot(x - player.x, z - player.z),
+          )) ||
       terrain.environment.trees.some(
         (tree) => Math.hypot(tree.x - x, tree.z - z) < 0.18,
       ) ||
@@ -370,9 +381,14 @@ export default function Scene({
     const clear = () => {
       keys.clear();
       controls?.current.clear();
+      resetControls.current?.();
       stepRemaining = 0;
       velocity = 0;
       drag = false;
+    };
+    const focusInput = (e: FocusEvent) => {
+      if (e.target instanceof HTMLElement &&
+          (e.target.isContentEditable || e.target.closest("input, textarea, select"))) clear();
     };
     const down = (e: PointerEvent) => {
       if (mode !== "play" || falling) return;
@@ -406,7 +422,7 @@ export default function Scene({
       window.addEventListener("keyup", keyup);
       window.addEventListener("blur", clear);
       document.addEventListener("visibilitychange", clear);
-      window.addEventListener("focusin", clear);
+      window.addEventListener("focusin", focusInput);
       renderer.domElement.addEventListener("pointerdown", down);
       renderer.domElement.addEventListener("pointermove", move);
       renderer.domElement.addEventListener("pointerup", up);
@@ -530,6 +546,7 @@ export default function Scene({
               (spawn.water ?? -Infinity) + 0.9,
             );
             falling = null;
+            jump = null;
             respawnFade = 1;
             clear();
           }
@@ -539,6 +556,12 @@ export default function Scene({
             fallVeil.current.style.opacity = String(respawnFade);
           const active = (key: string) =>
             keys.has(key) || controls?.current.has(key);
+          const profile = movementProfile(!!active("run"), !!active("crouch"));
+          if (controls?.current.delete("jump") && !jump) {
+            const ground = floorHeight(worldRef.current, player.x, player.z, structures);
+            if (ground !== null) jump = { origin: ground, elapsed: 0 };
+          }
+          if (jump) jump.elapsed += dt;
           for (const [command, turn] of [
             ["turn-left", -Math.PI / 12],
             ["turn-right", Math.PI / 12],
@@ -591,7 +614,7 @@ export default function Scene({
               (floorHeight(worldRef.current, player.x, player.z, structures) ??
                 0);
           const speed =
-            SURFACES.find((s) => s.id === surface)!.speed * (wet ? 0.55 : 1);
+            SURFACES.find((s) => s.id === surface)!.speed * (wet ? 0.55 : 1) * profile.speed;
           const desired = dt ? (distance / dt) * speed : 0;
           velocity +=
             (desired - velocity) *
@@ -607,7 +630,14 @@ export default function Scene({
             player.z,
             structures,
           );
-          if (floor === null) {
+          let feet = floor;
+          if (jump) {
+            const flight = jumpFrame(jump.origin, jump.elapsed);
+            if (flight.descending && floor !== null && flight.y <= floor) jump = null;
+            else if (floor === null && flight.y < jump.origin && flight.descending) jump = null;
+            else feet = flight.y;
+          }
+          if (feet === null) {
             falling = { originY: eyeY, elapsed: 0 };
             clear();
             callback.current?.({ ...player, pitch, falling: true });
@@ -618,8 +648,8 @@ export default function Scene({
               player.z,
             );
             const targetY = Math.max(
-              floor + EYE_HEIGHT,
-              (local.water ?? -Infinity) + 0.9,
+              feet + profile.eyeHeight,
+              (local.water ?? -Infinity) + Math.min(0.9, profile.eyeHeight),
             );
             eyeY += (targetY - eyeY) * (1 - Math.exp(-8 * dt));
           }
@@ -649,7 +679,7 @@ export default function Scene({
       window.removeEventListener("keyup", keyup);
       window.removeEventListener("blur", clear);
       document.removeEventListener("visibilitychange", clear);
-      window.removeEventListener("focusin", clear);
+      window.removeEventListener("focusin", focusInput);
       renderer.domElement.removeEventListener("webglcontextlost", contextLost);
       clear();
       disposeGroup(scene);

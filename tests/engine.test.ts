@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  jumpFrame,
+  movementProfile,
+  blocksAirStep,
   followHeading,
   movementKey,
   fallFrame,
@@ -631,4 +634,25 @@ test("grass has continuous cover inside a patch while paths and holes stay clear
     ]),
     0,
   );
+});
+
+test("jump rises, peaks, and lands without blocking horizontal movement over lower ground", () => {
+  assert.equal(jumpFrame(2, 0).y, 2);
+  assert.equal(jumpFrame(2, .4).y, 2.8);
+  assert.ok(Math.abs(jumpFrame(2, .8).y - 2) < 1e-10);
+  assert.equal(jumpFrame(2, .2).descending, false);
+  assert.equal(jumpFrame(2, .6).descending, true);
+  assert.equal(blocksAirStep(2.8, 2), false);
+  assert.equal(blocksAirStep(2.8, null), false);
+  assert.equal(blocksAirStep(2.8, 3.5), true);
+});
+test("run and crouch change speed without changing turning sensitivity", () => {
+  const walk = movementProfile(false, false);
+  const run = movementProfile(true, false);
+  const crouch = movementProfile(false, true);
+  assert.equal(run.eyeHeight, walk.eyeHeight);
+  assert.ok(run.speed > walk.speed);
+  assert.ok(crouch.speed < walk.speed);
+  assert.ok(crouch.eyeHeight < walk.eyeHeight);
+  assert.deepEqual(movementProfile(true, true), crouch);
 });

@@ -78,6 +78,7 @@ export default function Home() {
     [share, setShare] = useState(false),
     [newDialog, setNewDialog] = useState(false),
     [playKey, setPlayKey] = useState(0);
+  const [movementMode, setMovementMode] = useState<"walk" | "run" | "crouch">("walk");
   const [layer, setLayer] = useState<"tiles" | "symbols">("tiles"),
     [surface, setSurface] = useState<Surface>("plain"),
     [height, setHeight] = useState(0);
@@ -328,10 +329,12 @@ export default function Home() {
     setPlaying(true);
     setPlayKey((k) => k + 1);
     controls.current.clear();
+    setMovementMode("walk");
   };
   const exit = () => {
     setPlaying(false);
     controls.current.clear();
+    setMovementMode("walk");
     reset();
   };
   useEffect(() => {
@@ -527,7 +530,8 @@ export default function Home() {
             {t("만들기")}
           </button>
           <button
-            className={playing ? "active" : ""}
+            className={`play-tab ${playing ? "active" : ""}`}
+            aria-pressed={playing}
             onClick={() => {
               if (!playing) enter();
             }}
@@ -576,6 +580,7 @@ export default function Home() {
             mode="play"
             onPlayer={(p) => (player.current = p)}
             controls={controls}
+            onControlsReset={() => setMovementMode("walk")}
           />
           <div className="crosshair" />
           <div className="touch-controls" aria-label={t("이동 터치패드")}>
@@ -642,6 +647,29 @@ export default function Home() {
                 <span aria-hidden="true">{glyph}</span>
               </button>
             ))}
+            <div className="movement-modes">
+              {(["run", "crouch"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  aria-label={t(mode === "run" ? "점프 · 빠르게" : "숙이기 · 천천히")}
+                  aria-pressed={movementMode === mode}
+                  onClick={() => {
+                    if (player.current.falling) return;
+                    const next = movementMode === mode ? "walk" : mode;
+                    controls.current.delete("run");
+                    controls.current.delete("crouch");
+                    controls.current.delete("jump");
+                    if (next !== "walk") controls.current.add(next);
+                    if (next === "run") controls.current.add("jump");
+                    setMovementMode(next);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d={mode === "run" ? "M8 14l4-4 4 4" : "M8 10l4 4 4-4"} />
+                  </svg>
+                </button>
+              ))}
+            </div>
           </div>
           <span className="sr-only" aria-live="polite">
             {log[0]?.message}
