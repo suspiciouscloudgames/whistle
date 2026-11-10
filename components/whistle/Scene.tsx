@@ -431,7 +431,7 @@ export default function Scene({
       targetPitch = THREE.MathUtils.clamp(
         targetPitch - (e.clientY - lastY) * 0.0015,
         -0.7,
-        0.7,
+        1.45,
       );
       lastX = e.clientX;
       lastY = e.clientY;

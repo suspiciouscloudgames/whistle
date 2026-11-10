@@ -418,3 +418,15 @@ test("pond centers immerse half the player while banks remain walkable and jumpi
     previous = next;
   }
 });
+
+test("clouds occupy the sky above the board as well as the distance, without a circular empty center", async () => {
+  const { cloudLayout } = await import("../lib/weather.ts");
+  for (const size of [6, 12, 24]) {
+    const clouds = cloudLayout(size);
+    assert.deepEqual(clouds, cloudLayout(size));
+    assert.ok(clouds.filter(c => Math.abs(c.x) < size && Math.abs(c.z) < size).length >= 4);
+    assert.ok(clouds.some(c => Math.hypot(c.x, c.z) < size));
+    assert.ok(clouds.some(c => Math.hypot(c.x, c.z) > size * 1.5));
+    assert.ok(Math.max(...clouds.map(c => c.y)) - Math.min(...clouds.map(c => c.y)) > 10);
+  }
+});

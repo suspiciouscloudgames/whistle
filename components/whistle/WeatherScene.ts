@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { cloudLayout } from "../../lib/weather.ts";
 import type { Weather } from "../../lib/world.ts";
 import { randomSequence } from "../../lib/terrain.ts";
 
@@ -18,19 +19,12 @@ export function makeWeather(size: number) {
   }
   const cloudMap = new THREE.CanvasTexture(cloudCanvas);
   const clouds = new THREE.Group();
-  for (let i = 0; i < 9; i++) {
+  const layout = cloudLayout(size);
+  for (const cloud of layout) {
     const material = new THREE.SpriteMaterial({ map: cloudMap, transparent: true, depthWrite: false, fog: false, opacity: .48 });
     const sprite = new THREE.Sprite(material);
-    // Stagger apparent altitude as well as distance so clouds do not form a ring.
-    const angle = (i + (random() - .5) * .7) * Math.PI * 2 / 9;
-    const distance = size + 6 + random() * 18;
-    const elevation = .12 + ((i * 5) % 9) / 8 * .5 + random() * .08;
-    sprite.position.set(
-      Math.cos(angle) * distance,
-      2 + Math.tan(elevation) * distance,
-      Math.sin(angle) * distance,
-    );
-    sprite.scale.set(13 + random()*11, 3.5 + random()*3, 1);
+    sprite.position.set(cloud.x, cloud.y, cloud.z);
+    sprite.scale.set(cloud.width, cloud.height, 1);
     clouds.add(sprite);
   }
   group.add(clouds);
@@ -56,8 +50,12 @@ export function makeWeather(size: number) {
     clouds.visible=weather!=="clear"; rain.visible=weather==="rain"; snow.visible=weather==="snow";
     if (weather==="clear") return;
     const seconds=time*.001;
-    clouds.rotation.y = seconds*.002;
-    for(const child of clouds.children) (child as THREE.Sprite).material.color.setScalar(.35+daylight*.5);
+    clouds.children.forEach((child, i) => {
+      const cloud = layout[i];
+      child.position.x = cloud.x + Math.sin(seconds * .008 + cloud.phase) * 2;
+      child.position.z = cloud.z + Math.sin(seconds * .005 + cloud.phase) * .7;
+      (child as THREE.Sprite).material.color.setScalar(.35 + daylight * .5);
+    });
     if(weather==="cloud") return;
     const cx=overview?0:camera.position.x, cz=overview?0:camera.position.z;
     const radius=overview?size+3:14;
