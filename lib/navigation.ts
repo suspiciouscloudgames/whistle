@@ -56,10 +56,12 @@ export function blocksGroundStep(
   );
 }
 
-/** One jump on activation; running remains enabled after landing. */
+export const JUMP_BUFFER_SECONDS = 0.16;
+export const COYOTE_SECONDS = 0.12;
+/** A deliberate hop with enough travel to clear a small gap. */
 export function jumpFrame(origin: number, elapsed: number) {
   const t = Math.max(0, elapsed);
-  return { y: origin + 4 * t - 5 * t * t, descending: t >= 0.4 };
+  return { y: origin + 4.8 * t - 5 * t * t, descending: t >= 0.48 };
 }
 export function movementProfile(running: boolean, crouching: boolean) {
   return crouching
@@ -70,4 +72,31 @@ export function movementProfile(running: boolean, crouching: boolean) {
 /** In the air, ground below the feet must not block horizontal motion. */
 export function blocksAirStep(feet: number, next: number | null) {
   return next !== null && next > feet + 0.23;
+}
+
+/** Preserve launch momentum, even when a thumb leaves the movement pad. */
+export function launchJump(origin: number, yaw: number, direction: number, speed: number) {
+  const travel = direction === 0 ? 0 : Math.sign(direction) * Math.max(2.6, Math.abs(speed));
+  return { origin, elapsed: 0, vx: Math.sin(yaw) * travel, vz: -Math.cos(yaw) * travel };
+}
+export function resolveJump(jump: { origin: number; elapsed: number }, floor: number | null) {
+  const flight = jumpFrame(jump.origin, jump.elapsed);
+  if (flight.descending && floor !== null && flight.y <= floor)
+    return { feet: floor, landed: true, missed: false };
+  const missed = floor === null && flight.descending && flight.y < jump.origin;
+  return { feet: missed ? null : flight.y, landed: false, missed };
+}
+
+/** Keep roughly half the standing body above deep water; shallow shores stay grounded. */
+export function playerEyeHeight(feet: number, water: number | null, eyeHeight = 1.35) {
+  return Math.max(feet + eyeHeight, water === null ? -Infinity : water + eyeHeight * 0.5);
+}
+
+/** Irregular, distance-driven footfalls; no motion while standing still. */
+export function roughGroundMotion(distance: number, roughness: number, speed: number, crouching: boolean) {
+  const strength = Math.max(0, Math.min(1, roughness)) * Math.max(0, Math.min(1, speed / 1.8)) * (crouching ? 0.55 : 1);
+  return {
+    y: (Math.sin(distance * 9) + 0.4 * Math.sin(distance * 15.7)) * 0.035 * strength,
+    roll: Math.sin(distance * 7.1) * 0.004 * strength,
+  };
 }

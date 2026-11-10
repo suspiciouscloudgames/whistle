@@ -11,12 +11,15 @@ import {
 import { encodeWorld, downloadWorld } from "@/lib/sharing";
 import { ImageEditor, type ImageEditorHandle } from "./ImageEditor";
 import { ObjectArt } from "./Art";
+import { textImage } from "@/lib/text-image";
 export function Dialog({
   title,
+  heading,
   children,
   onClose,
 }: {
   title: string;
+  heading?: ReactNode;
   children: ReactNode;
   onClose: () => void;
 }) {
@@ -39,7 +42,7 @@ export function Dialog({
     >
       <div className="dialog-inner">
         <header className="dialog-heading">
-          <h2>{title}</h2>
+          {heading ?? <h2>{title}</h2>}
           <button
             className="dialog-close"
             aria-label={t("닫기")}
@@ -86,8 +89,9 @@ export function AssetMaker({
   const [shape, setShape] = useState<Shape>(
     existing?.shape === "image" ? "sphere" : (existing?.shape ?? "sphere"),
   );
-  const [name, setName] = useState(existing?.name ?? ""),
-    [solid, setSolid] = useState(existing?.solid ?? false);
+  const [name, setName] = useState(existing?.name ?? "");
+  const [mediaType, setMediaType] = useState<"image" | "text">(existing?.text !== undefined ? "text" : "image");
+  const [text, setText] = useState(existing?.text ?? "");
   const [scale, setScale] = useState(existing?.defaultScale ?? 1);
   const [loading, setLoading] = useState(false),
     [error, setError] = useState("");
@@ -97,12 +101,14 @@ export function AssetMaker({
     name: name || shapeNames[shape] || "무제",
     shape,
     color: existing?.color ?? "#111111",
-    solid,
+    solid: existing?.solid ?? false,
     defaultScale: scale,
   };
   const save = () => {
     try {
-      const media = editor.current?.export();
+      const media = mediaType === "text"
+        ? { text: text.trim(), image: textImage(text) }
+        : editor.current?.export();
       if (!media) return;
       onSave({
         ...asset,
@@ -115,7 +121,15 @@ export function AssetMaker({
     }
   };
   return (
-    <Dialog title={t(existing ? "이미지 편집" : "만들기")} onClose={onClose}>
+    <Dialog title={t(mediaType === "image" ? "이미지" : "텍스트")} onClose={onClose}
+      heading={<div className="media-tabs" role="group" aria-label={t("이미지 또는 텍스트")}>
+        {(["image", "text"] as const).map((kind) => <button key={kind}
+          aria-pressed={mediaType === kind}
+          onClick={() => { setMediaType(kind); setError(""); }}>
+          {t(kind === "image" ? "이미지" : "텍스트")}
+        </button>)}
+      </div>}>
+
       <div className="shape-options" role="group" aria-label={t("기호")}>
         {(["sphere", "box", "cone", "diamond", "ring", "bar"] as Shape[]).map(
           (s) => (
@@ -131,6 +145,7 @@ export function AssetMaker({
           ),
         )}
       </div>
+      <div hidden={mediaType !== "image"}>
       <ImageEditor
         ref={editor}
         image={existing?.image}
@@ -138,25 +153,19 @@ export function AssetMaker({
         onName={setName}
         onBusy={setLoading}
       />
-      <details className="asset-properties">
-        <summary>{t("속성")}</summary>
-        <SizeOptions value={scale} onChange={setScale} />
-        <label className="check-field">
-          <input
-            type="checkbox"
-            checked={solid}
-            onChange={(e) => setSolid(e.target.checked)}
-          />
-          {t("충돌")}
-        </label>
-      </details>
+      </div>
+      {mediaType === "text" && <textarea className="text-object-input"
+        aria-label={t("텍스트 입력")} placeholder={t("텍스트 입력")}
+        value={text} maxLength={500}
+        onChange={(e) => setText(e.target.value)} />}
+      <SizeOptions compact value={scale} onChange={setScale} />
       {error && (
         <p className="error" role="alert">
           {t(error)}
         </p>
       )}
       <div className="dialog-footer">
-        <button className="primary" disabled={loading} onClick={save}>
+        <button className="primary" disabled={mediaType === "image" ? loading : !text.trim()} onClick={save}>
           {t("저장")}
         </button>
       </div>
@@ -166,13 +175,15 @@ export function AssetMaker({
 export function SizeOptions({
   value,
   onChange,
+  compact = false,
 }: {
+  compact?: boolean;
   value: number;
   onChange: (value: number) => void;
 }) {
   const { t } = useLanguage();
   return (
-    <fieldset className="size-options">
+    <fieldset className={`size-options ${compact ? "asset-size-options" : ""}`}>
       <legend>{t("크기")}</legend>
       <div>
         {(

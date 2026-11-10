@@ -58,7 +58,7 @@ export function waterLevelAt(
   for (const [h, w] of waterWeights(size, x, z, level)) if (w > 0.8) return h;
   return null;
 }
-/** A shallow bed and a continuous bank meet the horizontal surface at its shore. */
+/** A waist-deep bed and a continuous bank meet the horizontal surface at its shore. */
 export function carveWaterBed(
   world: Ground,
   x: number,
@@ -74,7 +74,9 @@ export function carveWaterBed(
   for (const [h, w] of weights) {
     if (w <= 0.5) continue;
     const bankBlend = smooth((w - 0.5) / 0.22);
-    const bed = h * unit - 0.32 * smooth((w - 0.72) / 0.28);
+    // Preserve the shoreline profile; deepen only the submerged interior.
+    const bed = h * unit - 0.32 * smooth((w - 0.72) / 0.28)
+      - 0.48 * smooth((w - 0.84) / 0.16);
     return ground + (bed - ground) * bankBlend;
   }
   return ground;

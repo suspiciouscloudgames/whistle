@@ -412,7 +412,7 @@ export function makeTerrain(world: World, structures: Structure[]) {
         Math.abs(z - (s.z + s.dz * 0.5)) < 0.55,
     );
     if (onStairs) continue;
-    if (sample.weights.rough > 0.5 && random() < 0.01 && pebbles.length < 240)
+    if (sample.weights.rough > 0.5 && random() < 0.0125 && pebbles.length < 300)
       pebbles.push({
         x: toScene(x),
         y: sample.height,
@@ -466,6 +466,7 @@ export function makeTerrain(world: World, structures: Structure[]) {
       );
       rocks.setMatrixAt(i, matrix);
     });
+    rocks.name = "scattered-stones";
     rocks.castShadow = rocks.receiveShadow = true;
     group.add(rocks);
   }

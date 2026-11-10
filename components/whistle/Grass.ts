@@ -224,7 +224,8 @@ export function makeGrass(
         vec3 rootPosition = instanceMatrix[3].xyz;
         float phase = wind * 1.2 + rootPosition.x * .8 + rootPosition.z * .6;
         float gust = .12 + sin(phase)*.1 + sin(wind*2.1+rootPosition.z)*.025;
-        vec3 breeze = vec3(fieldWind.x*gust, 0.0, fieldWind.y*gust);
+        vec2 ambientBreeze = vec2(.26, .14);
+        vec3 breeze = vec3((fieldWind.x+ambientBreeze.x)*gust, 0.0, (fieldWind.y+ambientBreeze.y)*gust);
         transformed.x += bend * dot(breeze,instanceMatrix[0].xyz) / dot(instanceMatrix[0].xyz,instanceMatrix[0].xyz);
         transformed.z += bend * dot(breeze,instanceMatrix[2].xyz) / dot(instanceMatrix[2].xyz,instanceMatrix[2].xyz);
       #endif

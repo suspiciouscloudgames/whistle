@@ -5,10 +5,18 @@ import * as THREE from "three";
 import type { Asset, World, Simulation, Player } from "@/lib/world";
 import { softenEdges } from "./Atmosphere";
 import { makeTerrain } from "./TerrainScene";
-import { deriveStructures, floorHeight, tileAt, SURFACES } from "@/lib/terrain";
+import { deriveStructures, floorHeight, tileAt, terrainSample, SURFACES } from "@/lib/terrain";
 import { environmentAt } from "@/lib/environment";
+import { makeWeather } from "./WeatherScene";
+import { WEATHER } from "@/lib/weather";
 import { daylightAt } from "@/lib/daylight";
 import {
+  roughGroundMotion,
+  playerEyeHeight,
+  launchJump,
+  resolveJump,
+  JUMP_BUFFER_SECONDS,
+  COYOTE_SECONDS,
   blocksAirStep,
   jumpFrame,
   movementProfile,
@@ -148,6 +156,9 @@ export default function Scene({
       return;
     }
     const scene = new THREE.Scene();
+    const weatherScene = makeWeather(world.size);
+    scene.add(weatherScene.group);
+    const weatherSky = new THREE.Color();
     let targetDay = daylightAt(clockRef.current());
     const currentDay = { ...targetDay };
     let lastClockSample = -Infinity;
@@ -226,15 +237,21 @@ export default function Scene({
     };
     const player: Player = { ...world.start, yaw: 0 };
     let falling: { originY: number; elapsed: number } | null = null;
-    let jump: { origin: number; elapsed: number } | null = null;
+    let jump: ReturnType<typeof launchJump> | null = null;
+    let jumpBuffer = 0;
+    let groundAge = 0;
+    let lastGround = floorHeight(world, player.x, player.z, structures) ?? 0;
     let respawnFade = 0;
+    let walkedDistance = 0, groundBob = 0, groundRoll = 0;
     let pitch = -0.12,
       targetPitch = pitch,
       targetYaw = player.yaw,
       stepRemaining = 0,
-      eyeY =
-        (floorHeight(world, world.start.x, world.start.z, structures) ?? 0) +
+      eyeY = playerEyeHeight(
+        floorHeight(world, world.start.x, world.start.z, structures) ?? 0,
+        environmentAt(terrain.environment, world.start.x, world.start.z).water,
         EYE_HEIGHT,
+      ),
       velocity = 0,
       frame = 0,
       last = performance.now(),
@@ -359,7 +376,6 @@ export default function Scene({
       if (
         mode !== "play" ||
         falling !== null ||
-        e.repeat ||
         e.metaKey ||
         e.ctrlKey ||
         e.altKey ||
@@ -368,10 +384,15 @@ export default function Scene({
             e.target.closest("input, textarea, select")))
       )
         return;
+      if (e.code === "Space" || e.key === " ") {
+        e.preventDefault();
+        if (!e.repeat) jumpBuffer = JUMP_BUFFER_SECONDS;
+        return;
+      }
       const key = movementKey(e);
       if (key) {
         e.preventDefault();
-        keys.add(key);
+        if (!e.repeat) keys.add(key);
       }
     };
     const keyup = (e: KeyboardEvent) => {
@@ -382,6 +403,7 @@ export default function Scene({
       keys.clear();
       controls?.current.clear();
       resetControls.current?.();
+      jumpBuffer = 0;
       stepRemaining = 0;
       velocity = 0;
       drag = false;
@@ -448,12 +470,15 @@ export default function Scene({
         "fog",
       ] as const)
         currentDay[key] += (targetDay[key] - currentDay[key]) * blend;
-      sky.copy(nightSky).lerp(white, currentDay.daylight);
+      const weather = worldRef.current.weather ?? "clear";
+      const climate = WEATHER[weather];
+      weatherSky.set(climate.sky);
+      sky.copy(nightSky).lerp(weatherSky, currentDay.daylight);
       atmosphere.color.copy(sky);
-      atmosphere.density = baseFog * currentDay.fog;
-      mistColor.copy(nightMist).lerp(white, currentDay.daylight);
-      ambient.intensity = currentDay.ambient;
-      sun.intensity = currentDay.sun;
+      atmosphere.density = baseFog * currentDay.fog * climate.fog;
+      mistColor.copy(nightMist).lerp(weatherSky, currentDay.daylight);
+      ambient.intensity = currentDay.ambient * climate.ambient;
+      sun.intensity = currentDay.sun * climate.sun;
       sun.position.set(currentDay.sunX, currentDay.sunY, currentDay.sunZ);
       moon.intensity = currentDay.moon;
       updateModels();
@@ -524,6 +549,7 @@ export default function Scene({
         model.rotation.x = Math.sin(time * 0.0015 + a.x) * c.windZ * 0.07;
       }
       if (mode === "play") {
+        const previousX = player.x, previousZ = player.z;
         if (falling) {
           falling.elapsed += dt;
           const frame = fallFrame(falling.originY, falling.elapsed);
@@ -540,13 +566,15 @@ export default function Scene({
               player.x,
               player.z,
             );
-            eyeY = Math.max(
-              (floorHeight(worldRef.current, player.x, player.z, structures) ??
-                0) + EYE_HEIGHT,
-              (spawn.water ?? -Infinity) + 0.9,
+            eyeY = playerEyeHeight(
+              floorHeight(worldRef.current, player.x, player.z, structures) ?? 0,
+              spawn.water,
+              EYE_HEIGHT,
             );
             falling = null;
             jump = null;
+            groundAge = 0;
+            lastGround = floorHeight(worldRef.current, player.x, player.z, structures) ?? 0;
             respawnFade = 1;
             clear();
           }
@@ -557,9 +585,21 @@ export default function Scene({
           const active = (key: string) =>
             keys.has(key) || controls?.current.has(key);
           const profile = movementProfile(!!active("run"), !!active("crouch"));
-          if (controls?.current.delete("jump") && !jump) {
-            const ground = floorHeight(worldRef.current, player.x, player.z, structures);
-            if (ground !== null) jump = { origin: ground, elapsed: 0 };
+          const ground = floorHeight(worldRef.current, player.x, player.z, structures);
+          if (ground !== null && !jump) {
+            lastGround = ground;
+            groundAge = 0;
+          } else groundAge += dt;
+          if (controls?.current.delete("jump")) jumpBuffer = JUMP_BUFFER_SECONDS;
+          else jumpBuffer = Math.max(0, jumpBuffer - dt);
+          if (jumpBuffer > 0 && !jump && groundAge <= COYOTE_SECONDS) {
+            const input = Number(!!(active("forward") || active("w") || active("arrowup")))
+              - Number(!!(active("backward") || active("s") || active("arrowdown")));
+            const direction = input || (Math.abs(velocity) > .1 ? Math.sign(velocity) : Math.sign(stepRemaining));
+            jump = launchJump(lastGround, player.yaw, direction, 1.5 * profile.speed);
+            jumpBuffer = 0;
+            groundAge = Infinity;
+            stepRemaining = 0;
           }
           if (jump) jump.elapsed += dt;
           for (const [command, turn] of [
@@ -620,8 +660,8 @@ export default function Scene({
             (desired - velocity) *
             (surface === "slick" ? 1 - Math.exp(-3 * dt) : 1);
           distance = velocity * dt;
-          const dx = Math.sin(player.yaw) * distance,
-            dz = -Math.cos(player.yaw) * distance;
+          const dx = jump ? jump.vx * dt : Math.sin(player.yaw) * distance,
+            dz = jump ? jump.vz * dt : -Math.cos(player.yaw) * distance;
           if (!blocked(player.x + dx, player.z)) player.x += dx;
           if (!blocked(player.x, player.z + dz)) player.z += dz;
           const floor = floorHeight(
@@ -632,10 +672,11 @@ export default function Scene({
           );
           let feet = floor;
           if (jump) {
-            const flight = jumpFrame(jump.origin, jump.elapsed);
-            if (flight.descending && floor !== null && flight.y <= floor) jump = null;
-            else if (floor === null && flight.y < jump.origin && flight.descending) jump = null;
-            else feet = flight.y;
+            const landing = resolveJump(jump, floor);
+            feet = landing.feet;
+            if (landing.landed || landing.missed) jump = null;
+          } else if (floor === null && groundAge <= COYOTE_SECONDS) {
+            feet = lastGround - 5 * groundAge * groundAge;
           }
           if (feet === null) {
             falling = { originY: eyeY, elapsed: 0 };
@@ -647,22 +688,33 @@ export default function Scene({
               player.x,
               player.z,
             );
-            const targetY = Math.max(
-              feet + profile.eyeHeight,
-              (local.water ?? -Infinity) + Math.min(0.9, profile.eyeHeight),
-            );
+            const targetY = playerEyeHeight(feet, local.water, profile.eyeHeight);
             eyeY += (targetY - eyeY) * (1 - Math.exp(-8 * dt));
           }
         }
-        camera.position.set(toScene(player.x), eyeY, toScene(player.z));
+        const traveled = Math.hypot(player.x - previousX, player.z - previousZ) * 2;
+        const grounded = !falling && !jump && respawnFade === 0 && !reducedMotion;
+        if (grounded) walkedDistance += traveled;
+        const underfoot = environmentAt(terrain.environment, player.x, player.z);
+        const ground = floorHeight(worldRef.current, player.x, player.z, structures);
+        const dry = underfoot.water === null || (ground !== null && ground >= underfoot.water);
+        const roughness = grounded && dry && ground !== null
+          ? terrainSample(worldRef.current, player.x, player.z).weights.rough : 0;
+        const motion = roughGroundMotion(walkedDistance, roughness, dt > 0 ? traveled / dt : 0, !!controls?.current.has("crouch"));
+        const settle = 1 - Math.exp(-14 * dt);
+        groundBob += (motion.y - groundBob) * settle;
+        groundRoll += (motion.roll - groundRoll) * settle;
+        camera.position.set(toScene(player.x), eyeY + groundBob, toScene(player.z));
         camera.rotation.order = "YXZ";
         camera.rotation.y = -player.yaw;
         camera.rotation.x = pitch;
+        camera.rotation.z = groundRoll;
         if (time - report > 80) {
           callback.current?.({ ...player, pitch, falling: falling !== null });
           report = time;
         }
       }
+      weatherScene.update(time, worldRef.current.weather ?? "clear", camera, currentDay.daylight, mode === "overview");
       renderer.render(scene, camera);
       frame = requestAnimationFrame(render);
     };

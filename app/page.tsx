@@ -24,6 +24,7 @@ import {
   type PlacementFeedback,
 } from "@/lib/placement-feedback";
 import { decodeWorld, downloadWorld } from "@/lib/sharing";
+import { WeatherControls } from "@/components/whistle/WeatherControls";
 import { PaintGrid } from "@/components/whistle/PaintGrid";
 import {
   EnvironmentTile,
@@ -78,7 +79,7 @@ export default function Home() {
     [share, setShare] = useState(false),
     [newDialog, setNewDialog] = useState(false),
     [playKey, setPlayKey] = useState(0);
-  const [movementMode, setMovementMode] = useState<"walk" | "run" | "crouch">("walk");
+  const [movementMode, setMovementMode] = useState<"walk" | "crouch">("walk");
   const [layer, setLayer] = useState<"tiles" | "symbols">("tiles"),
     [surface, setSurface] = useState<Surface>("plain"),
     [height, setHeight] = useState(0);
@@ -518,7 +519,7 @@ export default function Home() {
   };
   return (
     <main className={`studio ${playing ? "playing" : ""}`}>
-      <header className="topbar">
+      {!playing && <header className="topbar">
         <h1>Whistle</h1>
         <nav className="view-tabs" aria-label={t("화면")}>
           <button
@@ -530,7 +531,7 @@ export default function Home() {
             {t("만들기")}
           </button>
           <button
-            className={`play-tab ${playing ? "active" : ""}`}
+            className={playing ? "active" : ""}
             aria-pressed={playing}
             onClick={() => {
               if (!playing) enter();
@@ -558,7 +559,7 @@ export default function Home() {
             </button>
           </div>
           <div className="file-actions">
-            <button onClick={() => setNewDialog(true)}>{t("새로")}</button>
+            <button onClick={() => setNewDialog(true)}>{t("새 세계")}</button>
             <button onClick={() => file.current?.click()}>
               {t("불러오기")}
             </button>
@@ -570,7 +571,7 @@ export default function Home() {
             </button>
           </div>
         </div>
-      </header>
+      </header>}
       {playing ? (
         <section className="play-shell">
           <Scene
@@ -582,6 +583,9 @@ export default function Home() {
             controls={controls}
             onControlsReset={() => setMovementMode("walk")}
           />
+          <button className="play-return" aria-label={t("만들기로 돌아가기")} onClick={exit}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /></svg>
+          </button>
           <div className="crosshair" />
           <div className="touch-controls" aria-label={t("이동 터치패드")}>
             {(
@@ -648,27 +652,28 @@ export default function Home() {
               </button>
             ))}
             <div className="movement-modes">
-              {(["run", "crouch"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  aria-label={t(mode === "run" ? "점프 · 빠르게" : "숙이기 · 천천히")}
-                  aria-pressed={movementMode === mode}
-                  onClick={() => {
-                    if (player.current.falling) return;
-                    const next = movementMode === mode ? "walk" : mode;
-                    controls.current.delete("run");
-                    controls.current.delete("crouch");
-                    controls.current.delete("jump");
-                    if (next !== "walk") controls.current.add(next);
-                    if (next === "run") controls.current.add("jump");
-                    setMovementMode(next);
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d={mode === "run" ? "M8 14l4-4 4 4" : "M8 10l4 4 4-4"} />
-                  </svg>
-                </button>
-              ))}
+              <button aria-label={t("점프")}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  if (!player.current.falling) controls.current.add("jump");
+                }}
+                onClick={(e) => {
+                  if (e.detail === 0 && !player.current.falling) controls.current.add("jump");
+                }}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 14l4-4 4 4" /></svg>
+              </button>
+              <button aria-label={t("기어가기")}
+                aria-pressed={movementMode === "crouch"}
+                onClick={() => {
+                  if (player.current.falling) return;
+                  const next = movementMode === "crouch" ? "walk" : "crouch";
+                  controls.current.delete("run");
+                  controls.current.delete("crouch");
+                  if (next === "crouch") controls.current.add("crouch");
+                  setMovementMode(next);
+                }}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10l4 4 4-4" /></svg>
+              </button>
             </div>
           </div>
           <span className="sr-only" aria-live="polite">
@@ -785,6 +790,8 @@ export default function Home() {
                       <span aria-hidden="true">↻</span>
                     </button>
                   </div>
+                  <WeatherControls className="weather-desktop" value={world.weather}
+                    onChange={(weather) => change((w) => { w.weather = weather; })} />
                 </div>
               </div>
             ) : (
@@ -966,6 +973,8 @@ export default function Home() {
             </div>
           </section>
           <aside className="preview-panel" aria-label={t("배치 결과")}>
+            <WeatherControls className="weather-mobile" value={world.weather}
+              onChange={(weather) => change((w) => { w.weather = weather; })} />
             <div className="live-preview">
               <Scene
                 world={world}
@@ -1037,7 +1046,7 @@ export default function Home() {
         />
       )}
       {newDialog && (
-        <Dialog title={t("새로")} onClose={() => setNewDialog(false)}>
+        <Dialog title={t("새 세계")} onClose={() => setNewDialog(false)}>
           <div className="new-actions">
             <button onClick={() => downloadWorld(world)}>
               {t("현재 파일 저장")}

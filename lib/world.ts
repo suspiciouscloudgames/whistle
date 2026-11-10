@@ -25,6 +25,8 @@ export type Asset = {
   color: string;
   image?: string;
   originalImage?: string;
+  /** Editable text source; image carries its transparent rendering into 3D. */
+  text?: string;
   defaultScale?: number;
   solid: boolean;
 };
@@ -50,6 +52,7 @@ export type Rule = {
   replacement: string;
   enabled: boolean;
 };
+export type Weather = "clear" | "cloud" | "rain" | "snow";
 export type World = {
   version: 1;
   title: string;
@@ -60,6 +63,7 @@ export type World = {
   rules: Rule[];
   start: { x: number; z: number };
   sky: string;
+  weather?: Weather;
   terrain?: Terrain;
 };
 export type Actor = Placed & { marks: string[]; removed: boolean };
@@ -443,6 +447,7 @@ export function validateWorld(input: unknown): World {
     typeof v === "string" && v.length <= max;
   if (
     w.version !== 1 ||
+    (w.weather !== undefined && !["clear", "cloud", "rain", "snow"].includes(w.weather)) ||
     !text(w.title, 60) ||
     !text(w.description, 300) ||
     !Number.isInteger(w.size) ||
@@ -467,6 +472,7 @@ export function validateWorld(input: unknown): World {
       typeof a.solid !== "boolean" ||
       (a.defaultScale !== undefined &&
         ![0.5, 1, 2, 3].includes(a.defaultScale)) ||
+      (a.text !== undefined && (!text(a.text, 500) || !a.text.trim())) ||
       [a.image, a.originalImage].some(
         (image) =>
           image !== undefined &&

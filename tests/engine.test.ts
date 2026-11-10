@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  roughGroundMotion,
+  launchJump,
+  resolveJump,
   jumpFrame,
   movementProfile,
   blocksAirStep,
@@ -638,8 +641,8 @@ test("grass has continuous cover inside a patch while paths and holes stay clear
 
 test("jump rises, peaks, and lands without blocking horizontal movement over lower ground", () => {
   assert.equal(jumpFrame(2, 0).y, 2);
-  assert.equal(jumpFrame(2, .4).y, 2.8);
-  assert.ok(Math.abs(jumpFrame(2, .8).y - 2) < 1e-10);
+  assert.ok(Math.abs(jumpFrame(2, .48).y - 3.152) < 1e-10);
+  assert.ok(Math.abs(jumpFrame(2, .96).y - 2) < 1e-10);
   assert.equal(jumpFrame(2, .2).descending, false);
   assert.equal(jumpFrame(2, .6).descending, true);
   assert.equal(blocksAirStep(2.8, 2), false);
@@ -655,4 +658,77 @@ test("run and crouch change speed without changing turning sensitivity", () => {
   assert.ok(crouch.speed < walk.speed);
   assert.ok(crouch.eyeHeight < walk.eyeHeight);
   assert.deepEqual(movementProfile(true, true), crouch);
+});
+
+test("text objects retain editable content and size across world sharing", () => {
+  const world = starterWorld();
+  world.assets[0].text = "안녕\nWhistle";
+  world.assets[0].defaultScale = 3;
+  const restored = validateWorld(JSON.parse(JSON.stringify(world)));
+  assert.equal(restored.assets[0].text, "안녕\nWhistle");
+  assert.equal(restored.assets[0].defaultScale, 3);
+  for (const invalid of [" ", "a".repeat(501), 42]) {
+    const malformed = JSON.parse(JSON.stringify(world));
+    malformed.assets[0].text = invalid;
+    assert.throws(() => validateWorld(malformed));
+  }
+});
+
+test("walking jumps cross a real one-tile hole at different frame rates and keep momentum after release", async () => {
+  const { flatTerrain, floorHeight } = await import("../lib/terrain.ts");
+  const world = starterWorld();
+  world.objects = [];
+  world.terrain = flatTerrain(world.size);
+  world.terrain.tiles[5 * world.size + 5].height = -1;
+  for (const fps of [20, 30, 60, 120]) {
+    let x = 4.1;
+    const flight = launchJump(floorHeight(world, x, 5, [])!, Math.PI / 2, 1, 1.5);
+    let crossed = false, landed = false;
+    for (let i = 0; i < fps * 2; i++) {
+      flight.elapsed += 1 / fps;
+      const next = x + flight.vx / fps;
+      const floor = floorHeight(world, next, 5, []);
+      assert.equal(blocksAirStep(jumpFrame(flight.origin, flight.elapsed).y, floor), false);
+      x = next;
+      crossed ||= floor === null;
+      const result = resolveJump(flight, floor);
+      assert.equal(result.missed, false);
+      if (result.landed) { landed = true; break; }
+    }
+    assert.ok(crossed && landed && x > 5.6, `landing at ${fps}fps: ${x}`);
+  }
+});
+test("standing jumps stay in place and gaps beyond jump range still cause a fall", () => {
+  const standing = launchJump(0, 0, 0, 0);
+  assert.equal(Math.hypot(standing.vx, standing.vz), 0);
+  const flight = launchJump(0, 0, 1, 1.5);
+  flight.elapsed = 1;
+  assert.equal(resolveJump(flight, null).missed, true);
+  assert.equal(resolveJump(flight, 0).landed, true);
+  const backward = launchJump(0, 0, -1, 1.5);
+  assert.ok(backward.vz > 0);
+});
+
+test("rough footsteps only move the camera while walking and remain gentle", () => {
+  for (let distance = 0; distance < 30; distance += .07) {
+    assert.equal(Math.abs(roughGroundMotion(distance, 1, 0, false).y), 0);
+    assert.equal(Math.abs(roughGroundMotion(distance, 1, 0, false).roll), 0);
+    const motion = roughGroundMotion(distance, 1, 2, false);
+    assert.ok(Math.abs(motion.y) <= .0491);
+    assert.ok(Math.abs(motion.roll) <= .0041);
+    const crouched = roughGroundMotion(distance, 1, 2, true);
+    assert.ok(Math.abs(crouched.y) <= Math.abs(motion.y));
+    assert.equal(Math.abs(roughGroundMotion(distance, 0, 2, false).y), 0);
+  }
+  assert.notEqual(roughGroundMotion(.2, 1, 2, false).y, roughGroundMotion(.4, 1, 2, false).y);
+});
+
+test("weather survives sharing, old worlds default to clear, and unknown weather is rejected", () => {
+  for (const weather of ["clear", "cloud", "rain", "snow"] as const) {
+    const world = starterWorld(); world.weather = weather;
+    assert.equal(validateWorld(JSON.parse(JSON.stringify(world))).weather, weather);
+  }
+  const old = starterWorld(); delete old.weather;
+  assert.equal(validateWorld(old).weather, undefined);
+  assert.throws(() => validateWorld({...old, weather: "storm-script"}));
 });

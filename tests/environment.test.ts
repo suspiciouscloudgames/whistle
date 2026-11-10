@@ -395,3 +395,26 @@ test("opening a wind corridor disperses local fog while the wet shaded ground st
   assert.equal(open.cells[i].fog, 0);
   assert.ok(open.cells[i].moisture >= 0.8);
 });
+
+test("pond centers immerse half the player while banks remain walkable and jumping clears the water", async () => {
+  const { floorHeight } = await import("../lib/terrain.ts");
+  const { playerEyeHeight, blocksGroundStep } = await import("../lib/navigation.ts");
+  const world = empty();
+  for (let z = 4; z <= 6; z++) for (let x = 4; x <= 6; x++)
+    world.terrain!.tiles[z * world.size + x] = { height: 0, surface: "slick" };
+  const env = deriveEnvironment(world);
+  const center = environmentAt(env, 5, 5).water!;
+  const floor = floorHeight(world, 5, 5, [])!;
+  assert.ok(center - floor >= 0.675);
+  assert.ok(Math.abs(playerEyeHeight(floor, center) - center - .675) < 1e-8);
+  assert.equal(playerEyeHeight(0, null), 1.35);
+  assert.equal(playerEyeHeight(1, center), 2.35);
+  assert.ok(playerEyeHeight(floor, center, .82) > center);
+  let previous = floorHeight(world, 3, 5, [])!;
+  for (let x = 3.01; x <= 5; x += .01) {
+    const next = floorHeight(world, x, 5, [])!;
+    assert.equal(blocksGroundStep(previous, next, .01), false);
+    assert.equal(blocksGroundStep(next, previous, .01), false);
+    previous = next;
+  }
+});
