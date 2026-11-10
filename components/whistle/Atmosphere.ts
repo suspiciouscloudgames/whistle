@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-// Fade into the current sky, so the editable square stays invisible day and night.
+
 export function softenEdges(root: THREE.Object3D, size: number) {
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;

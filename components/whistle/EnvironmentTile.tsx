@@ -9,7 +9,7 @@ export function environmentTileKind(c: EnvironmentCell) {
   return null;
 }
 
-/** The result replaces the material pattern. Fog can coexist with water or plants. */
+
 export function EnvironmentTile({ cell }: { cell: EnvironmentCell }) {
   const kind = environmentTileKind(cell);
   if (!kind) return null;

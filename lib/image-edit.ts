@@ -1,4 +1,4 @@
-/** Remove only the connected, similar-color region touched by the user. */
+
 export function eraseBackground(
   data: Uint8ClampedArray,
   width: number,

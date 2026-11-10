@@ -1,6 +1,7 @@
 import type { World } from "./world.ts";
 import { deriveStructures, tileAt } from "./terrain.ts";
 import { deriveEnvironment } from "./environment.ts";
+import { drainSources } from "./environment-effects.ts";
 
 export type CellChange = { index: number; result: boolean; removed: boolean };
 export type PlacementFeedback = { id: number; cells: CellChange[] };
@@ -8,11 +9,13 @@ export type PlacementFeedback = { id: number; cells: CellChange[] };
 function snapshot(world: World) {
   const structures = deriveStructures(world);
   const environment = deriveEnvironment(world, structures);
+  const drains = drainSources(world,environment);
   return environment.cells.map((c, i) => {
     const x = i % world.size,
       z = Math.floor(i / world.size);
     const results = [
       c.grass ? "grass" : "",
+      ...drains.filter(d=>d.cell===i || d.hole===i).map(d=>`drain:${d.cell}:${d.hole}`),
       c.tree ? "tree" : "",
       c.water === null ? "" : `water:${c.water.toFixed(2)}`,
       c.fog > 0.05 ? `fog:${Math.round(c.fog * 4)}` : "",
@@ -38,7 +41,7 @@ function snapshot(world: World) {
   });
 }
 
-/** Compare actual outcomes, including remote cells affected by closing a gap. */
+
 export function placementChanges(before: World, after: World): CellChange[] {
   if (before.size !== after.size) return [];
   const previous = snapshot(before),
@@ -52,7 +55,7 @@ export function placementChanges(before: World, after: World): CellChange[] {
   });
 }
 
-/** Connected areas become round preview pulses, never a 3D tile grid. */
+
 export function feedbackRegions(cells: CellChange[], size: number) {
   const remaining = new Set(cells.map((c) => c.index));
   const regions: { x: number; z: number; radius: number; indices: number[] }[] =

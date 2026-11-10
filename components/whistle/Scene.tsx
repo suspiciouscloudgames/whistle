@@ -5,6 +5,7 @@ import * as THREE from "three";
 import type { Asset, World, Simulation, Player } from "@/lib/world";
 import { softenEdges } from "./Atmosphere";
 import { makeTerrain } from "./TerrainScene";
+import { addSymbolVisuals, makeSymbolExperience } from "./SymbolExperience";
 import { deriveStructures, floorHeight, tileAt, terrainSample, SURFACES } from "@/lib/terrain";
 import { environmentAt } from "@/lib/environment";
 import { makeWeather } from "./WeatherScene";
@@ -24,6 +25,7 @@ import {
   movementKey,
   fallFrame,
   blocksGroundStep,
+  blocksTerrainStep,
 } from "@/lib/navigation";
 import {
   feedbackRegions,
@@ -66,7 +68,7 @@ function mesh(
 }
 function makeObject(asset: Asset): THREE.Group {
   const g = new THREE.Group();
-  // The symbol identifies an asset in the editor; only its media enters 3D.
+
   if (!asset.image) return g;
   const texture = new THREE.TextureLoader().load(asset.image);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -84,16 +86,7 @@ function makeObject(asset: Asset): THREE.Group {
     0.8,
   );
   picture.castShadow = false;
-  const mark = mesh(
-    new THREE.TorusGeometry(0.72, 0.025, 6, 32),
-    material("#111111"),
-    g,
-    0,
-    0.035,
-  );
-  mark.rotation.x = -Math.PI / 2;
-  mark.name = "mark";
-  mark.visible = false;
+  addSymbolVisuals(g, picture as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>, asset);
   return g;
 }
 function disposeGroup(g: THREE.Object3D) {
@@ -200,7 +193,7 @@ export default function Scene({
     moon.name = "whistle-moon";
     moon.position.set(10, 16, -10);
     scene.add(moon);
-    // An uninterrupted ground horizon, not a board of tile-sized pedestals.
+
     const horizon = new THREE.Mesh(
       new THREE.PlaneGeometry(240, 240),
       material("#ffffff"),
@@ -236,6 +229,8 @@ export default function Scene({
       pulses.clear();
     };
     const player: Player = { ...world.start, yaw: 0 };
+    const symbolExperience = makeSymbolExperience();
+    let pointerStart: {id: number; x: number; y: number; time: number; moved: boolean} | null = null;
     let falling: { originY: number; elapsed: number } | null = null;
     let jump: ReturnType<typeof launchJump> | null = null;
     let jumpBuffer = 0;
@@ -264,6 +259,7 @@ export default function Scene({
     let previousActors: typeof actors.current | undefined,
       previousAssets: typeof world.assets | undefined,
       previousTerrain: typeof world.terrain;
+    const fadingMist: {mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>; opacity: number; started: number}[] = [];
     const updateModels = () => {
       if (
         previousActors === actors.current &&
@@ -281,6 +277,14 @@ export default function Scene({
       if (signature !== terrainSignature) {
         terrainSignature = signature;
         structures = deriveStructures(worldRef.current, actors.current);
+        for (const fog of fadingMist) {scene.remove(fog.mesh);disposeGroup(fog.mesh);}
+        fadingMist.length=0;
+        const oldMist: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[]=[];
+        terrain.group.traverse(o=>{if(o.name==="generated-fog") oldMist.push(o as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>);});
+        for(const mesh of oldMist) {
+          mesh.removeFromParent();scene.add(mesh);
+          fadingMist.push({mesh,opacity:mesh.material.opacity,started:performance.now()});
+        }
         scene.remove(terrain.group);
         disposeGroup(terrain.group);
         terrain = makeTerrain(worldRef.current, structures);
@@ -355,6 +359,7 @@ export default function Scene({
     ro.observe(el);
     resize();
     const blocked = (x: number, z: number) =>
+      blocksTerrainStep(worldRef.current, player, {x, z}, structures) ||
       (jump
         ? blocksAirStep(jumpFrame(jump.origin, jump.elapsed).y,
             floorHeight(worldRef.current, x, z, structures))
@@ -369,6 +374,7 @@ export default function Scene({
       actors.current.some(
         (a) =>
           !a.removed &&
+          symbolExperience.blocksMovement(a.id) &&
           worldRef.current.assets.find((s) => s.id === a.asset)?.solid &&
           Math.hypot(x - a.x, z - a.z) < 0.43 * a.scale + 0.13,
       );
@@ -407,20 +413,25 @@ export default function Scene({
       stepRemaining = 0;
       velocity = 0;
       drag = false;
+      pointerStart = null;
+      symbolExperience.pause();
     };
     const focusInput = (e: FocusEvent) => {
       if (e.target instanceof HTMLElement &&
           (e.target.isContentEditable || e.target.closest("input, textarea, select"))) clear();
     };
     const down = (e: PointerEvent) => {
-      if (mode !== "play" || falling) return;
+      if (mode !== "play" || falling || pointerStart || e.button !== 0) return;
+      pointerStart = {id:e.pointerId,x:e.clientX,y:e.clientY,time:performance.now(),moved:false};
       drag = true;
       lastX = e.clientX;
       lastY = e.clientY;
       renderer.domElement.setPointerCapture(e.pointerId);
     };
     const move = (e: PointerEvent) => {
-      if (!drag) return;
+      if (!drag || !pointerStart || pointerStart.id !== e.pointerId) return;
+      if (Math.hypot(e.clientX-pointerStart.x,e.clientY-pointerStart.y) > 8) pointerStart.moved = true;
+      if (!pointerStart.moved) return;
       targetYaw =
         player.yaw +
         THREE.MathUtils.clamp(
@@ -436,7 +447,13 @@ export default function Scene({
       lastX = e.clientX;
       lastY = e.clientY;
     };
-    const up = () => {
+    const up = (e: PointerEvent) => {
+      if (!pointerStart || pointerStart.id !== e.pointerId) return;
+      if (e.type === "pointerup" && !pointerStart.moved &&
+          Math.hypot(e.clientX-pointerStart.x,e.clientY-pointerStart.y) <= 8 &&
+          performance.now()-pointerStart.time < 450 && !falling)
+        symbolExperience.tap(e.clientX,e.clientY,renderer.domElement.getBoundingClientRect());
+      pointerStart = null;
       drag = false;
     };
     if (mode === "play") {
@@ -453,7 +470,7 @@ export default function Scene({
     const render = (time: number) => {
       const dt = Math.min((time - last) / 1000, 0.05);
       last = time;
-      // Re-read wall time after tab sleep or a device timezone change.
+
       if (time - lastClockSample >= 1000) {
         targetDay = daylightAt(clockRef.current());
         lastClockSample = time;
@@ -547,6 +564,10 @@ export default function Scene({
             : 0);
         model.rotation.z = Math.sin(time * 0.0015 + a.z) * c.windX * 0.07;
         model.rotation.x = Math.sin(time * 0.0015 + a.x) * c.windZ * 0.07;
+        if (mode === "overview") {
+          const picture = model.getObjectByName("symbol-content") as THREE.Mesh<THREE.PlaneGeometry,THREE.MeshBasicMaterial> | undefined;
+          if (picture) picture.material.opacity = 1;
+        }
       }
       if (mode === "play") {
         const previousX = player.x, previousZ = player.z;
@@ -714,7 +735,21 @@ export default function Scene({
           report = time;
         }
       }
+      if (mode === "play") symbolExperience.update({
+        world: worldRef.current, actors: actors.current, models: models.current, camera,
+        environment: terrain.environment, structures, terrain: terrain.group, player,
+        feet: floorHeight(worldRef.current,player.x,player.z,structures) ?? eyeY - EYE_HEIGHT,
+        grounded: !falling && !jump && respawnFade === 0,
+        dt: document.hidden ? 0 : dt, time, reducedMotion, daylight: currentDay.daylight,
+      });
       weatherScene.update(time, worldRef.current.weather ?? "clear", camera, currentDay.daylight, mode === "overview");
+      for(let i=fadingMist.length-1;i>=0;i--) {
+        const fog=fadingMist[i],fade=Math.min(1,(time-fog.started)/650);
+        fog.mesh.material.opacity=fog.opacity*(1-fade);
+        fog.mesh.quaternion.copy(camera.quaternion);
+        fog.mesh.material.color.copy(sky);
+        if(fade>=1) {scene.remove(fog.mesh);disposeGroup(fog.mesh);fadingMist.splice(i,1);}
+      }
       renderer.render(scene, camera);
       frame = requestAnimationFrame(render);
     };

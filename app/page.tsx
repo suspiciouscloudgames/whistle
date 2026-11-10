@@ -18,6 +18,7 @@ import {
   type Event,
   type Simulation,
 } from "@/lib/world";
+import { editTile, isHole, type TerrainTool } from "@/lib/tile";
 import { deriveEnvironment } from "@/lib/environment";
 import {
   placementChanges,
@@ -82,7 +83,7 @@ export default function Home() {
   const [movementMode, setMovementMode] = useState<"walk" | "crouch">("walk");
   const [layer, setLayer] = useState<"tiles" | "symbols">("tiles"),
     [surface, setSurface] = useState<Surface>("plain"),
-    [height, setHeight] = useState(0);
+    [terrainTool, setTerrainTool] = useState<TerrainTool>("surface");
   const strokeBase = useRef<World | null>(null);
   const [feedback, setFeedback] = useState<PlacementFeedback | null>(null);
   const feedbackId = useRef(0);
@@ -359,7 +360,7 @@ export default function Home() {
   const clickedCell = (x: number, z: number) => {
     const existing = world.objects.find((o) => o.x === x && o.z === z);
     if (placingStart) {
-      if ((tileAt(world, x, z)?.height ?? -1) < 0) {
+      if (!tileAt(world, x, z) || isHole(tileAt(world, x, z))) {
         notify("시작점에는 바닥이 필요해요.");
         return;
       }
@@ -416,9 +417,9 @@ export default function Home() {
     if (layer === "tiles") {
       next.terrain ??= flatTerrain(next.size);
       for (const i of cells) {
-        if (height < 0 && i === next.start.z * next.size + next.start.x)
+        if (terrainTool === "hole" && i === next.start.z * next.size + next.start.x)
           continue;
-        next.terrain.tiles[i] = { height, surface };
+        next.terrain.tiles[i] = editTile(next.terrain.tiles[i], terrainTool, surface);
       }
     } else {
       const asset = next.assets.find((a) => a.id === selectedAsset);
@@ -544,18 +545,20 @@ export default function Home() {
           <div className="language-switch" role="group" aria-label={t("언어")}>
             <button
               lang="ko"
+              aria-label="한국어"
               aria-pressed={language === "ko"}
               onClick={() => setLanguage("ko")}
             >
-              한국어
+              KO
             </button>
             <span aria-hidden="true">/</span>
             <button
               lang="en"
+              aria-label="English"
               aria-pressed={language === "en"}
               onClick={() => setLanguage("en")}
             >
-              English
+              EN
             </button>
           </div>
           <div className="file-actions">
@@ -734,15 +737,15 @@ export default function Home() {
                       aria-pressed={
                         layer === "tiles" &&
                         surface === entry.id &&
-                        height >= 0 &&
+                        terrainTool === "surface" &&
                         !placingStart
                       }
-                      className={`surface-choice ${layer === "tiles" && surface === entry.id && height >= 0 && !placingStart ? "active" : ""}`}
+                      className={`surface-choice ${layer === "tiles" && surface === entry.id && terrainTool === "surface" && !placingStart ? "active" : ""}`}
                       onClick={() => {
                         setLayer("tiles");
                         setPlacingStart(false);
                         setSurface(entry.id);
-                        if (height < 0) setHeight(0);
+                        setTerrainTool("surface");
                       }}
                     >
                       <span className={`surface-swatch surface-${entry.id}`} />
@@ -751,37 +754,37 @@ export default function Home() {
                 </div>
                 <div className="terrain-options">
                   <div className="height-choices" aria-label={t("바닥 높이")}>
-                    {[0, 1, 2, 3].map((h) => (
+                    {(["raise", "lower"] as const).map((tool) => (
                       <button
-                        key={h}
-                        aria-label={`${t("높이")} ${h}`}
+                        key={tool}
+                        aria-label={t(tool === "raise" ? "높이기" : "낮추기")}
                         aria-pressed={
-                          layer === "tiles" && height === h && !placingStart
+                          layer === "tiles" && terrainTool === tool && !placingStart
                         }
                         className={
-                          layer === "tiles" && height === h && !placingStart
+                          layer === "tiles" && terrainTool === tool && !placingStart
                             ? "active"
                             : ""
                         }
                         onClick={() => {
                           setLayer("tiles");
                           setPlacingStart(false);
-                          setHeight(h);
+                          setTerrainTool(tool);
                         }}
                       >
-                        {h}
+                        {tool === "raise" ? "＋" : "−"}
                       </button>
                     ))}
                   </div>
                   <div className="terrain-actions">
                     <button
-                      className={`clear-tile ${layer === "tiles" && height === -1 ? "active" : ""}`}
-                      aria-label={t("비우기")}
-                      aria-pressed={layer === "tiles" && height === -1}
+                      className={`clear-tile ${layer === "tiles" && terrainTool === "hole" ? "active" : ""}`}
+                      aria-label={t("구멍")}
+                      aria-pressed={layer === "tiles" && terrainTool === "hole"}
                       onClick={() => {
                         setLayer("tiles");
                         setPlacingStart(false);
-                        setHeight(-1);
+                        setTerrainTool("hole");
                       }}
                     >
                       <span aria-hidden="true" />
@@ -875,7 +878,7 @@ export default function Home() {
                     Math.floor(i / world.size),
                   )!;
                   const c = environment.cells[i];
-                  return `surface-${environmentTileKind(c) ? "plain" : tile.surface} level-${tile.height} ${tile.height < 0 ? "tile-void" : ""} ${c.grass ? "has-grass" : ""} ${c.water !== null ? "has-water" : ""} ${c.tree ? "has-tree" : ""} ${c.fog > 0.05 ? "has-fog" : ""}`;
+                  return `surface-${environmentTileKind(c) ? "plain" : tile.surface} level-${tile.height} ${isHole(tile) ? "tile-void" : ""} ${c.grass ? "has-grass" : ""} ${c.water !== null ? "has-water" : ""} ${c.tree ? "has-tree" : ""} ${c.fog > 0.05 ? "has-fog" : ""}`;
                 }}
                 label={(i) => {
                   const x = i % world.size,
@@ -884,7 +887,7 @@ export default function Home() {
                   const object = world.objects.find(
                     (o) => o.x === x && o.z === z,
                   );
-                  return `${String.fromCharCode(65 + x)}${z + 1} ${tile.height < 0 ? t("빈틈") : `${t("높이")} ${tile.height} ${t(SURFACES.find((s) => s.id === tile.surface)!.name)}`}${object ? " " + world.assets.find((a) => a.id === object.asset)?.name : ""}${x === world.start.x && z === world.start.z ? " " + t("시작점") : ""} ${environmentLabels(i)}`;
+                  return `${String.fromCharCode(65 + x)}${z + 1} ${isHole(tile) ? t("빈틈") : `${t("높이")} ${tile.height} ${t(SURFACES.find((s) => s.id === tile.surface)!.name)}`}${object ? " " + world.assets.find((a) => a.id === object.asset)?.name : ""}${x === world.start.x && z === world.start.z ? " " + t("시작점") : ""} ${environmentLabels(i)}`;
                 }}
                 renderCell={(i) => {
                   const x = i % world.size,
@@ -907,7 +910,7 @@ export default function Home() {
                         style={{ opacity: (1 - conditions.light) * 0.2 }}
                       />
                       <EnvironmentTile cell={conditions} />
-                      {tile.height > 0 && (
+                      {tile.height !== 0 && !isHole(tile) && (
                         <span className="tile-height">{tile.height}</span>
                       )}
                       {generated.map((t) => (

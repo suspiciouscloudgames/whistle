@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { makeTrees } from "./Trees.ts";
 import { makeWaterSurface } from "./WaterSurface.ts";
+import { makeDrainFlow } from "./DrainFlow.ts";
+import { fogPatches } from "../../lib/environment-effects.ts";
 import { waterWeights } from "../../lib/water.ts";
 import type { World } from "../../lib/world.ts";
 import { randomSequence, terrainSample } from "../../lib/terrain.ts";
@@ -14,27 +16,15 @@ export function makeEnvironment(
   const group = new THREE.Group();
   group.name = "generated-environment";
   const sceneCoord = (n: number) => n * 2 - world.size + 1;
-  // Clip each lake at the actual smooth terrain contour, never at tile edges.
-  let reflectivePools = 0;
+
   for (const pond of [...env.ponds].sort(
     (a, b) => b.cells.length - a.cells.length,
   )) {
-    const minX = Math.max(
-        -0.5,
-        Math.min(...pond.cells.map((i) => i % world.size)) - 1,
-      ),
-      maxX = Math.min(
-        world.size - 0.5,
-        Math.max(...pond.cells.map((i) => i % world.size)) + 1,
-      );
-    const minZ = Math.max(
-        -0.5,
-        Math.min(...pond.cells.map((i) => Math.floor(i / world.size))) - 1,
-      ),
-      maxZ = Math.min(
-        world.size - 0.5,
-        Math.max(...pond.cells.map((i) => Math.floor(i / world.size))) + 1,
-      );
+
+    const minX = Math.min(...pond.cells.map((i) => i % world.size)) - 1.5,
+      maxX = Math.max(...pond.cells.map((i) => i % world.size)) + 1.5;
+    const minZ = Math.min(...pond.cells.map((i) => Math.floor(i / world.size))) - 1.5,
+      maxZ = Math.max(...pond.cells.map((i) => Math.floor(i / world.size))) + 1.5;
     const positions: number[] = [],
       depths: number[] = [],
       indices: number[] = [],
@@ -51,13 +41,13 @@ export function makeEnvironment(
         positions.push(sceneCoord(gx), pond.level, sceneCoord(gz));
         depths.push(Math.max(0, depth));
         const wetWeight =
-          waterWeights(env.size, gx, gz, (i) => env.cells[i].water).get(
+          waterWeights(env.size, gx, gz, (i) => env.cells[i].water, (i) => env.cells[i].hole).get(
             pond.level,
           ) ?? 0;
         const edge = [
           depth - 0.002,
           (wetWeight - 0.72) * 0.2,
-          s.coverage - 0.95,
+          s.coverage - 0.5,
         ];
         constraints.push(edge);
         signed.push(Math.min(...edge));
@@ -123,12 +113,14 @@ export function makeEnvironment(
       geometry,
       pond.level,
       clock,
-      reflectivePools++ < 4,
     );
     group.add(water);
   }
   group.add(makeTrees(world, env, clock));
-  // Local translucent billboards: fog exists only in eligible shaded wet regions.
+  const flows=makeDrainFlow(world,env,clock);
+  if(flows.userData.count) group.add(flows);
+  else { flows.geometry.dispose(); flows.material.dispose(); }
+
   const mist: {
     mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
     x: number;
@@ -146,50 +138,32 @@ export function makeEnvironment(
         i,
       );
     }
-  const fogCells = env.cells
-    .map((c, i) => ({ c, i }))
-    .filter((v) => v.c.fog > 0.05);
-  if (fogCells.length) {
+  const patches = fogPatches(env);
+  if (patches.length) {
     const texture = new THREE.DataTexture(pixels, 32, 32);
     texture.needsUpdate = true;
     const random = randomSequence((world.terrain?.seed ?? 0) ^ 0x517a);
-    for (const { c, i } of fogCells)
-      for (let n = 0; n < 3; n++) {
-        if (mist.length >= 144) break;
-        const x = (i % world.size) + (random() - 0.5) * 0.8,
-          z = Math.floor(i / world.size) + (random() - 0.5) * 0.8;
-        const material = new THREE.MeshBasicMaterial({
-          map: texture,
-          color: "#ffffff",
-          transparent: true,
-          opacity: 0.18 * c.fog,
-          depthWrite: false,
-          side: THREE.DoubleSide,
-        });
-        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
-        mesh.name = "generated-fog";
-        mesh.scale.set(4.5, 1.5 + random(), 1);
-        mesh.position.set(
-          sceneCoord(x),
-          Math.max(terrainSample(world, x, z).height, c.water ?? -Infinity) +
-            0.5 +
-            random() * 0.6,
-          sceneCoord(z),
-        );
-        group.add(mesh);
-        mist.push({
-          mesh,
-          x: mesh.position.x,
-          z: mesh.position.z,
-          phase: random() * 6.28,
-          strength: c.fog,
-        });
-      }
+    for (const patch of patches) {
+      const {x,z,radius,strength}=patch;
+      const material = new THREE.MeshBasicMaterial({map:texture,color:"#ffffff",transparent:true,
+        opacity:0,depthWrite:false,side:THREE.DoubleSide});
+      const mesh=new THREE.Mesh(new THREE.PlaneGeometry(1,1),material);
+      mesh.name="generated-fog";
+      mesh.scale.set(radius*4,1.3+random()*.6,1);
+      mesh.position.set(sceneCoord(x), Math.max(terrainSample(world,x,z).height,
+        env.cells[Math.max(0,Math.min(env.cells.length-1,Math.round(z)*env.size+Math.round(x)))].water ?? -Infinity)+.65,sceneCoord(z));
+      group.add(mesh);
+      mist.push({mesh,x:mesh.position.x,z:mesh.position.z,phase:random()*6.28,strength});
+    }
   }
+  let firstTime: number | undefined;
   return {
     group,
     update: (time: number, camera?: THREE.Camera, mistColor?: THREE.Color) => {
+      firstTime ??= time;
+      const appear = Math.min(1,(time-firstTime)/650);
       for (const fog of mist) {
+        fog.mesh.material.opacity = .26 * fog.strength * appear;
         if (mistColor) fog.mesh.material.color.copy(mistColor);
         if (camera) fog.mesh.quaternion.copy(camera.quaternion);
         fog.mesh.position.x =

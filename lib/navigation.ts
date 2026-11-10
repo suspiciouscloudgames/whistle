@@ -1,4 +1,40 @@
-/** Physical keys keep movement available with Korean input and Caps Lock. */
+import type { World } from "./world.ts";
+import type { Structure } from "./terrain.ts";
+import { isHole } from "./tile.ts";
+
+export function blocksTerrainStep(
+  world: Pick<World, "size" | "terrain">,
+  from: { x: number; z: number },
+  to: { x: number; z: number },
+  structures: Structure[] = [],
+) {
+  const cell = (value: number) => Math.max(0, Math.min(world.size - 1, Math.round(value)));
+  const height = (x: number, z: number) => {
+    const bridge = structures.find(s => s.kind === "bridge" && s.x === x && s.z === z);
+    if (bridge) return bridge.height;
+    const tile = world.terrain?.tiles[z * world.size + x];
+    return isHole(tile) ? null : tile?.height ?? 0;
+  };
+  const steep = (ax: number, az: number, bx: number, bz: number) => {
+    const a = height(ax, az), b = height(bx, bz);
+    return a !== null && b !== null && Math.abs(a - b) > 1;
+  };
+  const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.z - from.z) * 10));
+  let x = cell(from.x), z = cell(from.z);
+  for (let i = 1; i <= steps; i++) {
+    const nx = cell(from.x + (to.x - from.x) * i / steps);
+    const nz = cell(from.z + (to.z - from.z) * i / steps);
+    if (steep(x, z, nx, nz) ||
+        (x !== nx && z !== nz && (
+          steep(x, z, nx, z) || steep(x, z, x, nz) ||
+          steep(nx, z, nx, nz) || steep(x, nz, nx, nz)))) return true;
+    x = nx;
+    z = nz;
+  }
+  return false;
+}
+
+
 export function movementKey(event: {
   code: string;
   key: string;
@@ -19,7 +55,7 @@ export function movementKey(event: {
   return Object.values(codes).includes(key) ? key : null;
 }
 
-/** Frame-rate independent camera turn, taking the shortest route across north. */
+
 export function followHeading(current: number, target: number, dt: number) {
   const difference = Math.atan2(
     Math.sin(target - current),
@@ -32,7 +68,7 @@ export function followHeading(current: number, target: number, dt: number) {
 }
 
 export const FALL_SECONDS = 2.2;
-/** A short accelerating descent, then a covered reset rather than a camera jump. */
+
 export function fallFrame(originY: number, elapsed: number) {
   const t = Math.max(0, Math.min(FALL_SECONDS, elapsed));
   const fade = Math.max(0, Math.min(1, (t - 1.75) / 0.35));
@@ -43,7 +79,7 @@ export function fallFrame(originY: number, elapsed: number) {
   };
 }
 
-/** Missing ground is walkable until the descent starts; cliffs still block walking. */
+
 export function blocksGroundStep(
   current: number | null,
   next: number | null,
@@ -58,7 +94,7 @@ export function blocksGroundStep(
 
 export const JUMP_BUFFER_SECONDS = 0.16;
 export const COYOTE_SECONDS = 0.12;
-/** A deliberate hop with enough travel to clear a small gap. */
+
 export function jumpFrame(origin: number, elapsed: number) {
   const t = Math.max(0, elapsed);
   return { y: origin + 4.8 * t - 5 * t * t, descending: t >= 0.48 };
@@ -69,12 +105,12 @@ export function movementProfile(running: boolean, crouching: boolean) {
     : { speed: running ? 1.65 : 1, eyeHeight: 1.35 };
 }
 
-/** In the air, ground below the feet must not block horizontal motion. */
+
 export function blocksAirStep(feet: number, next: number | null) {
   return next !== null && next > feet + 0.23;
 }
 
-/** Preserve launch momentum, even when a thumb leaves the movement pad. */
+
 export function launchJump(origin: number, yaw: number, direction: number, speed: number) {
   const travel = direction === 0 ? 0 : Math.sign(direction) * Math.max(2.6, Math.abs(speed));
   return { origin, elapsed: 0, vx: Math.sin(yaw) * travel, vz: -Math.cos(yaw) * travel };
@@ -87,12 +123,12 @@ export function resolveJump(jump: { origin: number; elapsed: number }, floor: nu
   return { feet: missed ? null : flight.y, landed: false, missed };
 }
 
-/** Keep roughly half the standing body above deep water; shallow shores stay grounded. */
+
 export function playerEyeHeight(feet: number, water: number | null, eyeHeight = 1.35) {
   return Math.max(feet + eyeHeight, water === null ? -Infinity : water + eyeHeight * 0.5);
 }
 
-/** Irregular, distance-driven footfalls; no motion while standing still. */
+
 export function roughGroundMotion(distance: number, roughness: number, speed: number, crouching: boolean) {
   const strength = Math.max(0, Math.min(1, roughness)) * Math.max(0, Math.min(1, speed / 1.8)) * (crouching ? 0.55 : 1);
   return {

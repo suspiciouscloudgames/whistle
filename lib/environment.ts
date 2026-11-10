@@ -1,3 +1,4 @@
+import { isHole } from "./tile.ts";
 import type { World } from "./world.ts";
 import { isWaterTile, WATER_INSET, waterLevelAt } from "./water.ts";
 import {
@@ -8,6 +9,8 @@ import {
 } from "./terrain.ts";
 
 export type EnvironmentCell = {
+  hole: boolean;
+  growth: number;
   grass: number;
   water: number | null;
   moisture: number;
@@ -44,8 +47,13 @@ export function deriveEnvironment(
     directions
       .map(([x, z]) => index((i % size) + x, Math.floor(i / size) + z))
       .filter((n) => n >= 0);
-  const height = (x: number, z: number) => tiles[index(x, z)]?.height ?? -1;
+  const height = (x: number, z: number) => {
+    const tile = tiles[index(x, z)];
+    return !tile || isHole(tile) ? -Infinity : tile.height;
+  };
   const cells: EnvironmentCell[] = tiles.map((tile) => ({
+    hole: isHole(tile),
+    growth: 0,
     grass: 0,
     water: null,
     moisture:
@@ -74,9 +82,9 @@ export function deriveEnvironment(
     return result;
   };
   const ponds: Environment["ponds"] = [];
-  // Two neighboring water tiles activate immediately, even on open ground.
+
   for (const elevation of new Set(
-    tiles.filter((t) => t.height >= 0).map((t) => t.height),
+    tiles.filter((t) => !isHole(t) && t.height <= 0).map((t) => t.height),
   )) {
     for (const group of components(
       (i) =>
@@ -91,9 +99,9 @@ export function deriveEnvironment(
       ponds.push({ cells: group, level });
     }
   }
-  // Height and enclosure determine light before vegetation grows.
+
   for (let i = 0; i < count; i++) {
-    if (tiles[i].height < 0) continue;
+    if (isHole(tiles[i])) continue;
     const x = i % size,
       z = Math.floor(i / size),
       h = tiles[i].height;
@@ -121,14 +129,14 @@ export function deriveEnvironment(
         Math.abs(z - s.z) <= 1
       )
         cells[i].light *= 0.45;
-    if (adjacent(i).some((n) => cells[n].water !== null))
+    if (adjacent(i).some((n) => cells[n].water !== null && h * LEVEL <= cells[n].water! + .24))
       cells[i].moisture = Math.max(0.8, cells[i].moisture);
   }
-  // A single gap is insufficient: at least three consecutive corridor cells.
+
   for (const axis of [0, 1]) {
     const candidate = (x: number, z: number) => {
       const i = index(x, z);
-      if (i < 0 || tiles[i].height < 0) return false;
+      if (i < 0 || isHole(tiles[i])) return false;
       const h = tiles[i].height;
       return axis === 0
         ? height(x, z - 1) > h && height(x, z + 1) > h
@@ -163,7 +171,7 @@ export function deriveEnvironment(
         if (before > tiles[start].height || after > tiles[end].height) continue;
         for (let d = -2; d < run.length + 2; d++) {
           const i = index(x + (axis === 0 ? d : 0), z + (axis === 1 ? d : 0));
-          if (i < 0 || tiles[i].height < 0) continue;
+          if (i < 0 || isHole(tiles[i])) continue;
           const strength = d < 0 || d >= run.length ? 0.4 : 0.9;
           if (axis === 0) cells[i].windX = strength;
           else cells[i].windZ = -strength;
@@ -174,17 +182,19 @@ export function deriveEnvironment(
   for (const group of components(
     (i) =>
       tiles[i].surface === "soft" &&
-      tiles[i].height >= 0 &&
+      !isHole(tiles[i]) &&
       cells[i].water === null,
   )) {
     if (group.length < 3) continue;
-    for (const i of group) if (cells[i].light > 0.2) cells[i].grass = 1;
+    for (const i of group) if (cells[i].light > 0.2) {
+      cells[i].grass = 1;
+      cells[i].growth = Math.min(1, (group.length - 3) / 21);
+    }
     if (group.length < 6) continue;
-    // Stable geometric priority keeps trees from jumping after unrelated edits.
+
     const candidates = group
       .filter(
         (i) =>
-          tiles[i].height >= 1 &&
           cells[i].light > 0.35 &&
           adjacent(i).filter((n) => cells[n].grass > 0).length >= 3,
       )
@@ -193,22 +203,22 @@ export function deriveEnvironment(
       const x = i % size,
         z = Math.floor(i / size);
       if (
-        trees.length >= 16 ||
-        trees.some((t) => Math.hypot(t.x - x, t.z - z) < 2.8)
+        trees.length >= 48 ||
+        trees.some((t) => Math.hypot(t.x - x, t.z - z) < 1.4)
       )
         continue;
       cells[i].tree = true;
       trees.push({ x, z, height: terrainSample(world, x, z).height });
     }
   }
-  // Trees and roofs feed back into the same light/moisture field used for fog.
+
   for (let i = 0; i < count; i++) {
-    if (tiles[i].height < 0) continue;
+    if (isHole(tiles[i])) continue;
     const x = i % size,
       z = Math.floor(i / size);
     for (const tree of trees) {
       const d = Math.hypot(tree.x - x, tree.z - z);
-      if (d < 1.7) cells[i].light *= 0.45 + (0.55 * d) / 1.7;
+      if (d < 1.25) cells[i].light *= 0.45 + (0.55 * d) / 1.25;
     }
     const c = cells[i],
       breeze = Math.hypot(c.windX, c.windZ);
@@ -223,6 +233,8 @@ export function environmentAt(
   z: number,
 ): EnvironmentCell {
   const empty: EnvironmentCell = {
+    hole: false,
+    growth: 0,
     grass: 0,
     water: null,
     moisture: 0,
@@ -233,7 +245,7 @@ export function environmentAt(
     tree: false,
   };
   if (x < -0.5 || z < -0.5 || x > env.size - 0.5 || z > env.size - 0.5)
-    return empty;
+    return { ...empty, water: waterLevelAt(env.size, x, z, (i) => env.cells[i].water, (i) => env.cells[i].hole) };
   const fx = Math.floor(x),
     fz = Math.floor(z),
     smooth = (t: number) => t * t * (3 - 2 * t),
@@ -251,6 +263,7 @@ export function environmentAt(
       c = env.cells[zz * env.size + xx];
     for (const key of [
       "grass",
+      "growth",
       "moisture",
       "light",
       "windX",
@@ -259,6 +272,6 @@ export function environmentAt(
     ] as const)
       out[key] += c[key] * w;
   }
-  out.water = waterLevelAt(env.size, x, z, (i) => env.cells[i].water);
+  out.water = waterLevelAt(env.size, x, z, (i) => env.cells[i].water, (i) => env.cells[i].hole);
   return out;
 }

@@ -14,6 +14,7 @@ export function treeAppearance(seed: number, x: number, z: number) {
   return {
     seed: variantSeed,
     species,
+    scale: 0.72,
     height: (species === "maple" ? 3.7 : 4.8) + random() * 1.7,
     width: 1.6 + random() * 0.8,
     lean: (random() - 0.5) * (species === "pine" ? 1.4 : 0.5),
@@ -30,7 +31,7 @@ const GRASS_COLORS = [
   [151, 139, 68],
   [54, 126, 89],
 ];
-/** Broad blended patches, with small root-level differences; no frame-time randomness. */
+
 export function grassAppearance(seed: number, x: number, z: number) {
   const gx = x / 2.8,
     gz = z / 2.8,

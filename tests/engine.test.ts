@@ -524,10 +524,9 @@ test("3D terrain is a shared seamless surface and natural slopes stay continuous
   w.objects = [];
   const flat = makeTerrain(w, []);
   const ground = flat.group.children[0] as InstanceType<typeof THREE.Mesh>;
-  assert.equal(
-    ground.geometry.getAttribute("position").count,
-    (w.size * 12 + 1) ** 2,
-  );
+  ground.geometry.computeBoundingBox();
+  assert.ok(ground.geometry.boundingBox!.min.x < -w.size);
+  assert.ok(ground.geometry.boundingBox!.max.z > w.size);
   assert.equal(
     flat.group.children.some((o) => o instanceof THREE.InstancedMesh),
     false,
@@ -731,4 +730,34 @@ test("weather survives sharing, old worlds default to clear, and unknown weather
   const old = starterWorld(); delete old.weather;
   assert.equal(validateWorld(old).weather, undefined);
   assert.throws(() => validateWorld({...old, weather: "storm-script"}));
+});
+
+test("terrain permits one-level routes but blocks steep edges in either direction and across corners", async () => {
+  const {blocksTerrainStep} = await import("../lib/navigation.ts");
+  const {flatTerrain, floorHeight} = await import("../lib/terrain.ts");
+  const w = starterWorld();
+  w.objects = [];
+  w.terrain = flatTerrain(w.size);
+  for (let z = 0; z < w.size; z++)
+    for (let x = 0; x < w.size; x++)
+      w.terrain.tiles[z * w.size + x].height = Math.min(6, x);
+  for (const step of [0.005, 0.025, 0.08]) {
+    for (let x = 1; x < 5; x += step) {
+      assert.equal(blocksTerrainStep(w, {x,z:3}, {x:x+step,z:3}), false);
+      assert.equal(blocksGroundStep(floorHeight(w,x,3),floorHeight(w,x+step,3),step), false);
+    }
+  }
+  w.terrain.tiles[3*w.size+2].height = 4;
+  assert.equal(blocksTerrainStep(w, {x:1.49,z:3}, {x:1.51,z:3}), true);
+  assert.equal(blocksTerrainStep(w, {x:1.51,z:3}, {x:1.49,z:3}), true);
+  assert.equal(blocksTerrainStep(w, {x:1,z:3}, {x:3,z:3}), true);
+  w.terrain.tiles[3*w.size+2].hole = true;
+  assert.equal(blocksTerrainStep(w, {x:1.49,z:3}, {x:1.51,z:3}), false);
+  w.terrain.tiles[3*w.size+2] = {height: 1, surface: "plain"};
+  w.terrain.tiles[4*w.size+1].height = 4;
+  w.terrain.tiles[4*w.size+2].height = 1;
+  assert.equal(blocksTerrainStep(w, {x:1.49,z:3.49}, {x:1.51,z:3.51}), true);
+  const bridge = {kind: "bridge" as const, x:2,z:3,height:1,dx:1,dz:0,key:"bridge:2:3"};
+  w.terrain.tiles[3*w.size+2].hole = true;
+  assert.equal(blocksTerrainStep(w, {x:1.49,z:3}, {x:1.51,z:3}, [bridge]), false);
 });

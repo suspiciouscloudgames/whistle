@@ -1,4 +1,4 @@
-/** Render text locally as transparent media while retaining its editable source. */
+
 export function textImage(value: string): string {
   const text = value.trim();
   if (!text) throw Error("텍스트를 입력하세요.");

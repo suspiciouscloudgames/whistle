@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GUST_GLSL } from "../../lib/environment-effects.ts";
 import {
   deriveEnvironment,
   environmentAt,
@@ -49,7 +50,7 @@ export function makeGrass(
   if (!area) return group;
   const random = randomSequence((world.terrain?.seed ?? 0) ^ 0x67a71);
   const toScene = (n: number) => n * 2 - world.size + 1;
-  // A continuous mat of low foliage closes the gaps below the taller blades.
+
   const cover = ground.clone(),
     positions = cover.getAttribute("position"),
     coverage: number[] = [],
@@ -104,7 +105,7 @@ export function makeGrass(
   understory.receiveShadow = true;
   group.add(understory);
 
-  // One tuft geometry is shared by every root. Density does not duplicate large vertex buffers.
+
   const verts: number[] = [],
     colors: number[] = [],
     normals: number[] = [],
@@ -171,7 +172,8 @@ export function makeGrass(
     for (let x = -0.5 + spacing / 2; x < world.size - 0.5; x += spacing) {
       const gx = x + (random() - 0.5) * spacing * 0.65,
         gz = z + (random() - 0.5) * spacing * 0.65;
-      if (random() > grassCoverAt(world, gx, gz, structures, environment))
+      const growth = environmentAt(environment,gx,gz).growth;
+      if (random() > grassCoverAt(world, gx, gz, structures, environment) * (.82 + growth * .18))
         continue;
       const root = {
         x: toScene(gx),
@@ -215,7 +217,7 @@ export function makeGrass(
   material.onBeforeCompile = (shader) => {
     shader.uniforms.wind = wind;
     shader.vertexShader =
-      "uniform float wind; attribute float bend; attribute vec2 fieldWind;\n" +
+      "uniform float wind; attribute float bend; attribute vec2 fieldWind;\n" + GUST_GLSL +
       shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
       "#include <begin_vertex>",
@@ -225,7 +227,8 @@ export function makeGrass(
         float phase = wind * 1.2 + rootPosition.x * .8 + rootPosition.z * .6;
         float gust = .12 + sin(phase)*.1 + sin(wind*2.1+rootPosition.z)*.025;
         vec2 ambientBreeze = vec2(.26, .14);
-        vec3 breeze = vec3((fieldWind.x+ambientBreeze.x)*gust, 0.0, (fieldWind.y+ambientBreeze.y)*gust);
+        vec2 air = ambientBreeze*gust + fieldWind*(.025+.35*corridorGust(wind));
+        vec3 breeze = vec3(air.x, 0.0, air.y);
         transformed.x += bend * dot(breeze,instanceMatrix[0].xyz) / dot(instanceMatrix[0].xyz,instanceMatrix[0].xyz);
         transformed.z += bend * dot(breeze,instanceMatrix[2].xyz) / dot(instanceMatrix[2].xyz,instanceMatrix[2].xyz);
       #endif
@@ -246,11 +249,12 @@ export function makeGrass(
       (root.z + world.size - 1) / 2,
     );
     const width = 0.9 + random() * 0.3;
+    const growth = environmentAt(environment,(root.x + world.size - 1)/2,(root.z + world.size - 1)/2).growth;
     q.setFromAxisAngle(up, random() * Math.PI * 2);
     matrix.compose(
       p.set(root.x, root.height - 0.015, root.z),
       q,
-      scale.set(width, tone.height, width),
+      scale.set(width, tone.height * (.85 + growth * .25), width),
     );
     grass.setMatrixAt(i, matrix);
     grass.setColorAt(

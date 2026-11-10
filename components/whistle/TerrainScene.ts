@@ -1,7 +1,9 @@
+import { isHole } from "../../lib/tile.ts";
 import * as THREE from "three";
 import { deriveEnvironment, environmentAt } from "../../lib/environment.ts";
 import { makeEnvironment } from "./EnvironmentScene.ts";
 import { makeGrass } from "./Grass.ts";
+import { wetGround } from "../../lib/environment-effects.ts";
 import type { World } from "@/lib/world";
 import {
   LEVEL,
@@ -10,7 +12,7 @@ import {
   type Structure,
 } from "../../lib/terrain.ts";
 
-// A continuous height field with blended materials, independent of the editor grid.
+
 export function makeTerrain(world: World, structures: Structure[]) {
   const group = new THREE.Group(),
     wind = { value: 0 };
@@ -23,7 +25,10 @@ export function makeTerrain(world: World, structures: Structure[]) {
     slick: new THREE.Color("#ffffff"),
     soft: new THREE.Color("#ffffff"),
   };
-  const resolution = world.size * 12,
+
+
+  const extent = world.size + 3;
+  const resolution = (world.size + 3) * 12,
     stride = resolution + 1;
   const positions: number[] = [],
     colors: number[] = [],
@@ -32,8 +37,8 @@ export function makeTerrain(world: World, structures: Structure[]) {
   const sampleColor = new THREE.Color();
   for (let z = 0; z <= resolution; z++)
     for (let x = 0; x <= resolution; x++) {
-      const gx = x / 12 - 0.5,
-        gz = z / 12 - 0.5,
+      const gx = x / 12 - 2,
+        gz = z / 12 - 2,
         sample = terrainSample(world, gx, gz);
       positions.push(toScene(gx), sample.height, toScene(gz));
       coverage.push(sample.coverage);
@@ -50,11 +55,12 @@ export function makeTerrain(world: World, structures: Structure[]) {
           0.018 *
           (sample.weights.rough + sample.weights.soft);
       sampleColor.multiplyScalar(
-        grain * (0.55 + 0.45 * environmentAt(environment, gx, gz).light),
+        grain * (0.55 + 0.45 * environmentAt(environment, gx, gz).light)
+          * (1 - wetGround(environment, gx, gz, sample.height) * .32),
       );
       colors.push(sampleColor.r, sampleColor.g, sampleColor.b);
     }
-  // Clip triangles to the curved gap contour, rather than omitting square tiles.
+
   const boundary = new Map<string, [number, number]>();
   const edge = (a: number, b: number) => {
     if (coverage[a] !== 0.5 || coverage[b] !== 0.5) return;
@@ -104,7 +110,7 @@ export function makeTerrain(world: World, structures: Structure[]) {
     return i;
   };
   const triangle = (a: number, b: number, c: number, refine = true) => {
-    // Only refine the rim, keeping the rest of the mobile terrain mesh light.
+
     if (
       refine &&
       Math.min(coverage[a], coverage[b], coverage[c]) < 0.5 &&
@@ -164,46 +170,44 @@ export function makeTerrain(world: World, structures: Structure[]) {
   );
   ground.receiveShadow = true;
   ground.castShadow = true;
-  group.add(ground);
-  // Continue the surface beyond the editable area. No square plinth in 3D.
+  ground.name = "continuous-ground";
+  ground.userData.interactionOccluder = true;
+    group.add(ground);
+
   const apronPositions: number[] = [],
     apronColors: number[] = [],
     apronIndices: number[] = [];
-  const rings = [0, 0.75, 2, 5, 12, 40, 120];
+  const rings = [0, .5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 24, 40, 120];
   for (let side = 0; side < 4; side++) {
     const offset = apronPositions.length / 3;
     for (const distance of rings)
       for (let i = 0; i <= resolution; i++) {
         const t = i / resolution,
-          extent = world.size + distance;
+          ringExtent = extent + distance;
         let x = 0,
           z = 0;
         if (side === 0) {
-          x = -extent + 2 * extent * t;
-          z = -extent;
+          x = -ringExtent + 2 * ringExtent * t;
+          z = -ringExtent;
         }
         if (side === 1) {
-          x = extent;
-          z = -extent + 2 * extent * t;
+          x = ringExtent;
+          z = -ringExtent + 2 * ringExtent * t;
         }
         if (side === 2) {
-          x = extent - 2 * extent * t;
-          z = extent;
+          x = ringExtent - 2 * ringExtent * t;
+          z = ringExtent;
         }
         if (side === 3) {
-          x = -extent;
-          z = extent - 2 * extent * t;
+          x = -ringExtent;
+          z = ringExtent - 2 * ringExtent * t;
         }
         const gx = (x + world.size - 1) / 2,
           gz = (z + world.size - 1) / 2;
-        const sample = terrainSample(
-          world,
-          Math.max(-0.5, Math.min(world.size - 0.5, gx)),
-          Math.max(-0.5, Math.min(world.size - 0.5, gz)),
-        );
+        const sample = terrainSample(world, gx, gz);
         const f = Math.min(1, distance / 5),
           blend = f * f * (3 - 2 * f);
-        apronPositions.push(x, sample.height * (1 - blend), z);
+        apronPositions.push(x, sample.height, z);
         sampleColor.setRGB(0, 0, 0);
         for (const name of ["plain", "rough", "slick", "soft"] as const) {
           sampleColor.r += palette[name].r * sample.weights[name];
@@ -243,7 +247,9 @@ export function makeTerrain(world: World, structures: Structure[]) {
     }),
   );
   apron.receiveShadow = true;
-  group.add(apron);
+  apron.name = "distant-ground";
+  apron.userData.interactionOccluder = true;
+    group.add(apron);
   const sides: number[] = [];
   for (const [a, b] of boundary.values()) {
     const ax = positions[a * 3],
@@ -253,8 +259,8 @@ export function makeTerrain(world: World, structures: Structure[]) {
       by = positions[b * 3 + 1],
       bz = positions[b * 3 + 2];
     if (
-      (Math.abs(ax) === world.size && ax === bx) ||
-      (Math.abs(az) === world.size && az === bz)
+      (Math.abs(ax) === extent && ax === bx) ||
+      (Math.abs(az) === extent && az === bz)
     )
       continue;
     sides.push(
@@ -298,8 +304,9 @@ export function makeTerrain(world: World, structures: Structure[]) {
     }),
   );
   bank.receiveShadow = true;
-  group.add(bank);
-  if (world.terrain?.tiles.some((t) => t.height < 0)) {
+  bank.userData.interactionOccluder = true;
+    group.add(bank);
+  if (world.terrain?.tiles.some((t) => isHole(t))) {
     const bottom = new THREE.Mesh(
       new THREE.PlaneGeometry(world.size * 2, world.size * 2),
       new THREE.MeshStandardMaterial({ color: "#121519", roughness: 1 }),
@@ -323,7 +330,7 @@ export function makeTerrain(world: World, structures: Structure[]) {
       z = toScene(s.z),
       y = s.height * LEVEL;
     if (s.kind === "stairs") {
-      // Treads follow the actual slope, reaching the next landform without a tile pedestal.
+
       for (let step = 0; step < 8; step++) {
         const t = (step + 0.5) / 8,
           gx = s.x + s.dx * t,
@@ -383,10 +390,11 @@ export function makeTerrain(world: World, structures: Structure[]) {
       built.setMatrixAt(i, matrix);
     });
     built.castShadow = built.receiveShadow = true;
+    built.userData.interactionOccluder = true;
     group.add(built);
   }
 
-  // Scatter across the blended region, never as a repeated clump per tile.
+
   const pebbles: {
     x: number;
     y: number;
@@ -395,7 +403,7 @@ export function makeTerrain(world: World, structures: Structure[]) {
     angle: number;
   }[] = [];
   const hasScatter = world.terrain?.tiles.some(
-    (t) => t.height >= 0 && t.surface === "rough",
+    (t) => !isHole(t) && t.surface === "rough",
   );
   const attempts = hasScatter
     ? Math.min(world.size * world.size * 750, 90000)

@@ -7,7 +7,7 @@ export const WEATHER = {
   snow: { sky: "#e6e9ec", sun: .45, ambient: .92, fog: 1.15 },
 } satisfies Record<Weather, { sky: string; sun: number; ambient: number; fog: number }>;
 
-/** Fill an area above and beyond the board, including its interior, rather than a perimeter. */
+
 export function cloudLayout(size: number) {
   const random = randomSequence(4027);
   const span = size * 3.6;

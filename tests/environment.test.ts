@@ -65,7 +65,8 @@ test("vegetation keeps its seeded appearance after reloads and unrelated placeme
       0.15,
   );
   const trees = makeTrees(w, env, { value: 0 });
-  assert.equal(trees.children.length, 5); // Shared bark + one draw per leaf type.
+  assert.equal(trees.children.length, 6);
+  assert.deepEqual(trees.children.filter(c=>(c as THREE.Mesh).castShadow).map(c=>c.name),["tree-shadow-crowns"]);
   for (const child of trees.children) {
     const mesh = child as THREE.Mesh;
     assert.ok(
@@ -201,24 +202,32 @@ test("grass requires three orthogonally connected soil tiles and disappears when
   ])
     w.terrain!.tiles[z * w.size + x].surface = "soft";
   assert.equal(deriveEnvironment(w).cells.filter((c) => c.grass).length, 0);
-  w.terrain!.tiles[4 * w.size + 5].surface = "soft"; // diagonal is not a connection
+  w.terrain!.tiles[4 * w.size + 5].surface = "soft";
   assert.equal(deriveEnvironment(w).cells.filter((c) => c.grass).length, 0);
   w.terrain!.tiles[3 * w.size + 5].surface = "soft";
   assert.equal(deriveEnvironment(w).cells.filter((c) => c.grass).length, 4);
   w.terrain!.tiles[3 * w.size + 4].surface = "plain";
   assert.equal(deriveEnvironment(w).cells.filter((c) => c.grass).length, 0);
 });
-test("two adjacent water tiles form a pool on open ground, at edges, and at different heights", () => {
-  for (const height of [0, 1, 3]) {
+test("connected water activates only on ground at zero or minus one", () => {
+  for (const height of [-1, 0]) {
     const w = empty();
-    w.terrain!.tiles[0] = { height, surface: "slick" };
+    w.terrain!.tiles[0] = { height, surface: "slick", hole: false };
     assert.equal(deriveEnvironment(w).ponds.length, 0);
-    w.terrain!.tiles[1] = { height, surface: "slick" };
+    w.terrain!.tiles[1] = { height, surface: "slick", hole: false };
     assert.equal(deriveEnvironment(w).ponds.length, 1);
     assert.equal(deriveEnvironment(w).ponds[0].level, height * LEVEL - 0.06);
-    w.terrain!.tiles[1].height = height === 3 ? 2 : height + 1;
+    w.terrain!.tiles[1].height = height === 0 ? -1 : 0;
     assert.equal(deriveEnvironment(w).ponds.length, 2);
-    w.terrain!.tiles[1].height = -1;
+    w.terrain!.tiles[1].hole = true;
+    assert.equal(deriveEnvironment(w).ponds.length, 0);
+  }
+  for (const height of [1, 2, 3, 4, 5, 6]) {
+    const w = empty();
+    w.terrain!.tiles[0] = { height, surface: "slick", hole: false };
+    w.terrain!.tiles[1] = { height, surface: "slick", hole: false };
+    assert.equal(deriveEnvironment(w).ponds.length, 0);
+    w.terrain!.tiles[0].height = 0;
     assert.equal(deriveEnvironment(w).ponds.length, 0);
   }
 });
@@ -233,22 +242,25 @@ test("single or diagonal water tiles do not activate, enclosure is unnecessary",
 test("water is inset into a carved bed with a dry bank, never a floating sheet", () => {
   const w = empty();
   const i = 4 * w.size + 4;
-  w.terrain!.tiles[i] = { height: 2, surface: "slick" };
-  w.terrain!.tiles[i + 1] = { height: 2, surface: "slick" };
+  w.terrain!.tiles[i] = { height: -1, surface: "slick", hole: false };
+  w.terrain!.tiles[i + 1] = { height: -1, surface: "slick", hole: false };
   const env = deriveEnvironment(w),
     level = env.ponds[0].level;
   assert.ok(terrainSample(w, 4, 4).height < level);
-  assert.ok(terrainSample(w, 4, 4.3).height > level);
-  assert.equal(environmentAt(env, 4, 4.5).water, null);
+
+  assert.ok(Array.from({ length: 80 }, (_, i) => 4 + i / 100).some(z =>
+    environmentAt(env, 4, z).water === null && terrainSample(w, 4, z).height > level,
+  ));
+  assert.equal(environmentAt(env, 4, 5.2).water, null);
   w.terrain!.tiles[i + 1].surface = "plain";
-  assert.equal(terrainSample(w, 4, 4).height, 2 * LEVEL);
+  assert.equal(terrainSample(w, 4, 4).height, -LEVEL);
 });
-test("water mesh shore meets its terrain at both low and raised elevations", () => {
-  for (const height of [0, 3]) {
+test("water mesh shore meets its terrain at both zero and depressed elevations", () => {
+  for (const [height, cellX, cellZ] of [[0, 4, 4], [-1, 4, 4], [0, 0, 0], [-1, 0, 0]]) {
     const w = empty(),
-      i = 4 * w.size + 4;
-    w.terrain!.tiles[i] = { height, surface: "slick" };
-    w.terrain!.tiles[i + 1] = { height, surface: "slick" };
+      i = cellZ * w.size + cellX;
+    w.terrain!.tiles[i] = { height, surface: "slick", hole: false };
+    w.terrain!.tiles[i + 1] = { height, surface: "slick", hole: false };
     const terrain = makeTerrain(w, deriveStructures(w));
     terrain.group.updateMatrixWorld(true);
     const water = terrain.group.getObjectByName(
@@ -263,7 +275,7 @@ test("water mesh shore meets its terrain at both low and raised elevations", () 
       point.fromBufferAttribute(position, n).applyMatrix4(water.matrixWorld);
       const x = (point.x + w.size - 1) / 2,
         z = (point.z + w.size - 1) / 2;
-      // Only boundary vertices referenced by the clipped mesh are shoreline.
+
       if (![...water.geometry.index!.array].includes(n)) continue;
       shore++;
       const ray = new THREE.Raycaster(
@@ -271,7 +283,7 @@ test("water mesh shore meets its terrain at both low and raised elevations", () 
         new THREE.Vector3(0, -1, 0),
       );
       const ground = ray.intersectObject(terrain.group.children[0], false)[0];
-      assert.ok(ground && Math.abs(ground.point.y - point.y) < 0.015);
+      assert.ok(ground && Math.abs(ground.point.y - point.y) < 0.015, `height=${height} shore=${x},${z} surface=${point.y} ground=${ground?.point.y}`);
     }
     assert.ok(shore > 0);
     terrain.group.traverse((object) => {
@@ -286,16 +298,39 @@ test("water mesh shore meets its terrain at both low and raised elevations", () 
     });
   }
 });
-test("trees need a broad connected grove and a raised interior; editing recomputes the result", () => {
+test("trees grow in a six-cell flat grove and disappear when it shrinks below the threshold", () => {
   const w = empty();
-  for (let z = 3; z < 6; z++)
+  for (let z = 3; z < 5; z++)
     for (let x = 3; x < 6; x++)
       w.terrain!.tiles[z * w.size + x].surface = "soft";
+  assert.ok(deriveEnvironment(w).trees.length > 0);
+  w.terrain!.tiles[4 * w.size + 5].surface = "plain";
   assert.equal(deriveEnvironment(w).trees.length, 0);
-  w.terrain!.tiles[4 * w.size + 4].height = 1;
-  assert.equal(deriveEnvironment(w).trees.length, 1);
-  w.terrain!.tiles[4 * w.size + 4].height = 0;
-  assert.equal(deriveEnvironment(w).trees.length, 0);
+});
+
+test("a broad raised grove can grow more than sixteen smaller trees while retaining clear root spacing", () => {
+  const world = empty();
+  for (let z = 1; z < 11; z++) for (let x = 1; x < 11; x++)
+    world.terrain!.tiles[z * world.size + x] = { height: 1, surface: "soft" };
+  const env = deriveEnvironment(world);
+  assert.ok(env.trees.length > 16 && env.trees.length <= 48);
+  for (let i = 0; i < env.trees.length; i++) {
+    const a = env.trees[i];
+    assert.equal(a.height, terrainSample(world, a.x, a.z).height);
+    for (const b of env.trees.slice(i + 1))
+      assert.ok(Math.hypot(a.x - b.x, a.z - b.z) >= 1.4);
+  }
+
+  const tree = env.trees[0];
+  const single = makeTrees(world, { ...env, trees: [tree] }, { value: 0 });
+  single.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(single);
+  assert.ok(bounds.max.y - tree.height < 5.5);
+  assert.ok(bounds.min.y >= tree.height - .05);
+  let leafCount = 0;
+  for (const child of single.children)
+    if (child instanceof THREE.InstancedMesh) leafCount += child.count;
+  assert.ok(leafCount > 800 && leafCount < 1700);
 });
 test("an open three-cell corridor produces wind; a blocked end stops it", () => {
   const w = empty();
@@ -429,4 +464,147 @@ test("clouds occupy the sky above the board as well as the distance, without a c
     assert.ok(clouds.some(c => Math.hypot(c.x, c.z) > size * 1.5));
     assert.ok(Math.max(...clouds.map(c => c.y)) - Math.min(...clouds.map(c => c.y)) > 10);
   }
+});
+
+test("rectangular water placement has one connected interior and a curved, repeatable shoreline", () => {
+  const world = empty();
+  for (let z = 3; z <= 7; z++) for (let x = 3; x <= 8; x++)
+    world.terrain!.tiles[z * world.size + x].surface = "slick";
+  const env = deriveEnvironment(world);
+  assert.equal(env.ponds.length, 1);
+  for (let x = 3; x <= 8; x += .1)
+    assert.notEqual(environmentAt(env, x, 5).water, null);
+  const coastline = Array.from({ length: 36 }, (_, i) => {
+    const x = 4 + i / 10;
+    for (let z = 1.5; z < 4; z += .01)
+      if (environmentAt(env, x, z).water !== null) return z;
+    throw new Error("shore not found");
+  });
+  assert.ok(Math.max(...coastline) - Math.min(...coastline) > .15);
+  assert.deepEqual(deriveEnvironment(clone(world)), env);
+});
+
+test("the visible landscape beyond the board matches walking height without a perimeter step", async () => {
+  const { floorHeight } = await import("../lib/terrain.ts");
+  const world = empty();
+  for (let z = 4; z <= 9; z++) world.terrain!.tiles[z * world.size + 11].height = 2;
+  const terrain = makeTerrain(world, []);
+  terrain.group.updateMatrixWorld(true);
+  const ground = terrain.group.getObjectByName("continuous-ground")!;
+  const distant = terrain.group.getObjectByName("distant-ground")!;
+  for (const x of [11.499, 11.501, 12, 12.9, 13.1, 14, 16, 19]) {
+    const z = 6.2;
+    const ray = new THREE.Raycaster(
+      new THREE.Vector3(x * 2 - world.size + 1, 20, z * 2 - world.size + 1),
+      new THREE.Vector3(0, -1, 0),
+    );
+    const hit = ray.intersectObjects([ground, distant], false)[0];
+    assert.ok(hit);
+    assert.ok(Math.abs(hit.point.y - floorHeight(world, x, z, [])!) < .04, `x=${x} mesh=${hit.point.y} floor=${floorHeight(world, x, z, [])}`);
+  }
+  assert.ok(Math.abs(floorHeight(world, 11.499, 6.2, [])! - floorHeight(world, 11.501, 6.2, [])!) < .001);
+});
+
+test("grass growth increases with connected area and saturates without losing ground cover", () => {
+  const w=empty();
+  for(const x of [3,4,5]) w.terrain!.tiles[3*w.size+x].surface="soft";
+  const small=deriveEnvironment(w).cells[3*w.size+4];
+  assert.equal(small.grass,1);assert.equal(small.growth,0);
+  for(let z=2;z<8;z++) for(let x=2;x<8;x++) w.terrain!.tiles[z*w.size+x].surface="soft";
+  const large=deriveEnvironment(w);
+  assert.equal(large.cells[3*w.size+4].growth,1);
+  assert.ok(large.cells.every(c=>c.growth>=0&&c.growth<=1));
+});
+
+test("water darkens only nearby low banks, and uses no per-pool reflection target", async () => {
+  const {wetGround}=await import("../lib/environment-effects.ts");
+  const w=empty();
+  for(const x of [4,5]) w.terrain!.tiles[4*w.size+x].surface="slick";
+  const env=deriveEnvironment(w);
+  assert.ok(wetGround(env,4,4.65,0)>0);
+  assert.equal(wetGround(env,4,4.65,2),0);
+  assert.equal(wetGround(env,1,1,0),0);
+  w.terrain!.tiles[5*w.size+4].height=2;
+  assert.equal(deriveEnvironment(w).cells[5*w.size+4].moisture,0);
+  const mesh=makeTerrain(w,[]).group.getObjectByName("generated-water") as THREE.Mesh<THREE.BufferGeometry,THREE.ShaderMaterial>;
+  assert.equal("getRenderTarget" in mesh,false);
+  assert.equal("tDiffuse" in mesh.material.uniforms,false);
+});
+
+test("drain flow requires active water touching a hole, disappears on edits, and remains grounded", async () => {
+  const {drainSources}=await import("../lib/environment-effects.ts");
+  const {makeDrainFlow}=await import("../components/whistle/DrainFlow.ts");
+  for(const height of [0,-1]) {
+    const w=empty();
+    w.terrain!.tiles[4*w.size+4]={height,surface:"slick",hole:false};
+    w.terrain!.tiles[4*w.size+5]={height,surface:"slick",hole:false};
+    w.terrain!.tiles[4*w.size+6].height=-1;
+    const env=deriveEnvironment(w),drains=drainSources(w,env);
+    assert.equal(drains.length,1);
+    assert.ok(Math.abs(terrainSample(w,drains[0].x,drains[0].z).coverage-.5)<.001);
+    assert.equal(environmentAt(env,drains[0].x-.035,drains[0].z).water,drains[0].level);
+    const flow=makeDrainFlow(w,env,{value:0});
+    assert.equal(flow.userData.count,1);
+    const p=flow.geometry.getAttribute("position");
+    assert.ok(p.getY(p.count-1)<p.getY(0)-2);
+    assert.ok([...p.array].every(Number.isFinite));
+    w.terrain!.tiles[4*w.size+6].height=0;
+    assert.equal(drainSources(w,deriveEnvironment(w)).length,0);
+    w.terrain!.tiles[4*w.size+6].height=-1;
+    w.terrain!.tiles[4*w.size+4].surface="plain";
+    assert.equal(drainSources(w,deriveEnvironment(w)).length,0);
+  }
+});
+
+test("connected fog is grouped and capped instead of adding three meshes per tile", async () => {
+  const {fogPatches}=await import("../lib/environment-effects.ts");
+  const env=deriveEnvironment(empty());
+  env.cells.forEach(c=>c.fog=.7);
+  const patches=fogPatches(env);
+  assert.ok(patches.length>0&&patches.length<=32);
+  assert.ok(patches.every(p=>p.radius<3.1&&p.strength>0));
+  env.cells.forEach(c=>c.fog=0);
+  assert.deepEqual(fogPatches(env),[]);
+});
+
+test("relative terrain edits preserve material, clamp repeated edits and distinguish depressed ground from holes", async () => {
+  const { editTile, isHole, MIN_HEIGHT, MAX_HEIGHT } = await import("../lib/tile.ts");
+  let tile = { height: 0, surface: "rough" as const, hole: false };
+  for (let i = 0; i < 50; i++) tile = editTile(tile, "raise", "plain") as typeof tile;
+  assert.equal(tile.height, MAX_HEIGHT);
+  assert.equal(tile.surface, "rough");
+  for (let i = 0; i < 50; i++) tile = editTile(tile, "lower", "plain") as typeof tile;
+  assert.equal(tile.height, MIN_HEIGHT);
+  assert.equal(isHole(tile), false);
+  const hole = editTile(tile, "hole", "plain");
+  assert.equal(isHole(hole), true);
+  assert.deepEqual(editTile(hole, "raise", "plain"), hole);
+  assert.deepEqual(editTile(hole, "lower", "plain"), hole);
+  assert.deepEqual(editTile(hole, "hole", "plain"), tile);
+  assert.deepEqual(editTile(hole, "surface", "soft"), { height: -1, surface: "soft", hole: false });
+  const legacy = {height: -1, surface: "plain" as const};
+  assert.equal(isHole(legacy), true);
+  assert.deepEqual(editTile(legacy, "surface", "soft"), {height: 0, surface: "soft", hole: false});
+});
+
+test("negative ground stays walkable and survives saves while old holes remain holes", async () => {
+  const {floorHeight} = await import("../lib/terrain.ts");
+  const w = empty();
+  const index = w.start.z * w.size + w.start.x;
+  w.terrain!.tiles[index] = {height: -1, surface: "plain", hole: false};
+  w.terrain!.tiles[0] = {height: -1, surface: "plain"};
+  w.terrain!.tiles[1] = {height: 6, surface: "plain"};
+  const saved = validateWorld(JSON.parse(JSON.stringify(w)));
+  assert.equal(floorHeight(saved, w.start.x, w.start.z), -LEVEL);
+  assert.equal(floorHeight(saved, 0, 0), null);
+  assert.equal(floorHeight(saved, 1, 0), 6 * LEVEL);
+  assert.ok(deriveStructures(saved).some(s => s.kind === "stairs" && s.height === -1));
+  for (const height of [-2, 7, 1.5, Infinity]) {
+    const invalid = clone(saved);
+    invalid.terrain!.tiles[1].height = height;
+    assert.throws(() => validateWorld(invalid));
+  }
+  const invalid = clone(saved);
+  (invalid.terrain!.tiles[1] as unknown as {hole: string}).hole = "false";
+  assert.throws(() => validateWorld(invalid));
 });

@@ -1,3 +1,4 @@
+import { isHole, MIN_HEIGHT, MAX_HEIGHT } from "./tile.ts";
 import {
   deriveStructures,
   floorHeight,
@@ -20,12 +21,12 @@ export type Shape =
 export type Asset = {
   id: string;
   name: string;
-  /** Editor symbol, independent from the image used in 3D. */
+
   shape: Shape;
   color: string;
   image?: string;
   originalImage?: string;
-  /** Editable text source; image carries its transparent rendering into 3D. */
+
   text?: string;
   defaultScale?: number;
   solid: boolean;
@@ -152,7 +153,7 @@ export function starterWorld(): World {
     start: { x: 6, z: 10 },
   };
 }
-// Keep the previous local document intact; migrate a copy into the new editor.
+
 export function abstractWorld(original: World): World {
   const w = clone(original);
   const shapes: Partial<Record<Shape, Shape>> = {
@@ -541,7 +542,8 @@ export function validateWorld(input: unknown): World {
         (tile) =>
           !tile ||
           !Number.isInteger(tile.height) ||
-          !number(tile.height, -1, 3) ||
+          !number(tile.height, MIN_HEIGHT, MAX_HEIGHT) ||
+          (tile.hole !== undefined && typeof tile.hole !== "boolean") ||
           !["plain", "rough", "slick", "soft"].includes(tile.surface),
       ) ||
       !t.patterns ||
@@ -551,7 +553,7 @@ export function validateWorld(input: unknown): World {
       )
     )
       throw Error("지형 데이터가 올바르지 않아요.");
-    if (t.tiles[w.start.z * w.size + w.start.x].height < 0)
+    if (isHole(t.tiles[w.start.z * w.size + w.start.x]))
       throw Error("시작점에는 바닥이 필요해요.");
   }
   return clone(w);

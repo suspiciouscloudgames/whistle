@@ -1,7 +1,8 @@
+import { isHole } from "./tile.ts";
 import type { World, Placed } from "./world.ts";
 import { carveWaterBed } from "./water.ts";
 export type Surface = "plain" | "rough" | "slick" | "soft";
-export type Tile = { height: number; surface: Surface };
+export type Tile = { height: number; surface: Surface; hole?: boolean };
 export type Terrain = {
   generatorVersion?: 2;
   seed: number;
@@ -72,13 +73,13 @@ export function generateTerrain(size: number, seed: number): Terrain {
     }
     return tile;
   });
-  // Preserve a broad, reachable entrance.
+
   for (let z = size - 3; z < size; z++)
     for (let x = 0; x < size; x++)
       terrain.tiles[z * size + x] = { height: 0, surface: "plain" };
   return terrain;
 }
-// Repair only the old generator's identifiable trench; retain authored holes and media.
+
 export function upgradeTerrain(world: World): World {
   const terrain = world.terrain;
   if (!terrain || terrain.generatorVersion === 2) return world;
@@ -154,7 +155,7 @@ export function deriveStructures(
     for (let z = 0; z < world.size; z++)
       for (let x = 0; x < world.size; x++) {
         const tile = tileAt(world, x, z)!;
-        if (tile.height < 0 || tile.surface !== "plain") continue;
+        if (isHole(tile) || tile.surface !== "plain") continue;
         for (const [dx, dz] of [
           [0, -1],
           [1, 0],
@@ -163,7 +164,7 @@ export function deriveStructures(
         ]) {
           const next = tileAt(world, x + dx, z + dz);
           if (
-            next &&
+            next && !isHole(next) &&
             next.height === tile.height + 1 &&
             next.surface === tile.surface
           ) {
@@ -176,7 +177,7 @@ export function deriveStructures(
     byCell = new Map(active.map((o) => [`${o.x},${o.z}`, o]));
   for (const a of active) {
     const tile = tileAt(world, a.x, a.z);
-    if (!tile || tile.height < 0) continue;
+    if (!tile || isHole(tile)) continue;
     if (patterns.bridge)
       for (const [dx, dz] of [
         [1, 0],
@@ -185,13 +186,13 @@ export function deriveStructures(
         for (let length = 2; length <= 4; length++) {
           const b = byCell.get(`${a.x + dx * length},${a.z + dz * length}`),
             end = tileAt(world, a.x + dx * length, a.z + dz * length);
-          if (!b || b.asset !== a.asset || end?.height !== tile.height)
+          if (!b || b.asset !== a.asset || end?.height !== tile.height || isHole(end))
             continue;
           const gaps = Array.from({ length: length - 1 }, (_, i) => ({
             x: a.x + dx * (i + 1),
             z: a.z + dz * (i + 1),
           }));
-          if (gaps.every((p) => tileAt(world, p.x, p.z)?.height === -1))
+          if (gaps.every((p) => isHole(tileAt(world, p.x, p.z))))
             for (const p of gaps) add("bridge", p.x, p.z, tile.height, dx, dz);
         }
     if (patterns.canopy) {
@@ -204,7 +205,7 @@ export function deriveStructures(
         corners.every(
           ([x, z]) =>
             byCell.get(`${x},${z}`)?.asset === a.asset &&
-            (tileAt(world, x, z)?.height ?? -1) >= 0,
+            !!tileAt(world, x, z) && !isHole(tileAt(world, x, z)),
         )
       )
         add(
@@ -220,7 +221,7 @@ export function deriveStructures(
   }
   return structures;
 }
-// Sample one continuous surface; the editing grid is never rendered in 3D.
+
 export function terrainSample(
   world: Pick<World, "size" | "terrain">,
   x: number,
@@ -246,7 +247,7 @@ export function terrainSample(
       Math.max(0, Math.min(world.size - 1, fx + dx)),
       Math.max(0, Math.min(world.size - 1, fz + dz)),
     )!;
-    if (tile.height < 0) {
+    if (isHole(tile)) {
       const hx = Math.max(0, Math.min(world.size - 1, fx + dx));
       const hz = Math.max(0, Math.min(world.size - 1, fz + dz));
       const seed =
@@ -271,11 +272,21 @@ export function terrainSample(
     elevation /= coverage;
     for (const surface of SURFACES) weights[surface.id] /= coverage;
   }
-  // Small non-periodic undulations prevent natural regions looking machined.
+
   const variation =
     Math.sin(x * 2.31 + z * 1.17) * Math.sin(z * 3.13 - x * 0.73);
   elevation += variation * 0.045 * (weights.soft + weights.rough);
   elevation = carveWaterBed(world, x, z, elevation, LEVEL);
+
+
+  const outside = Math.max(0, -0.5 - x, -0.5 - z, x - (world.size - 0.5), z - (world.size - 0.5));
+  if (outside > 0) {
+    const reach = 5.5 + 1.2 * Math.sin(x * .43 + z * .31);
+    const fade = smooth(Math.min(1, outside / reach));
+    elevation = elevation * (1 - fade)
+      + Math.sin(x * .61 + z * .27) * Math.cos(z * .49 - x * .19) * .45 * fade * (1 - fade);
+    voidAmount *= 1 - smooth(Math.min(1, outside / 1.5));
+  }
   return {
     height: elevation,
     coverage: Math.max(0, Math.min(1, 1 - voidAmount)),
@@ -288,7 +299,7 @@ export function floorHeight(
   z: number,
   structures = deriveStructures(world),
 ): number | null {
-  // The 2D board bounds editing, not walking: continue into the white atmosphere.
+
   const outside = Math.max(
     0,
     -0.5 - x,
@@ -297,14 +308,8 @@ export function floorHeight(
     z - (world.size - 0.5),
   );
   if (outside > 0) {
-    const edge = terrainSample(
-      world,
-      Math.max(-0.5, Math.min(world.size - 0.5, x)),
-      Math.max(-0.5, Math.min(world.size - 0.5, z)),
-    );
-    const t = Math.min(1, (outside * 2) / 5),
-      fade = t * t * (3 - 2 * t);
-    return edge.height * (1 - fade);
+    const sample = terrainSample(world, x, z);
+    return sample.coverage >= .5 ? sample.height : null;
   }
   const bridge = structures.find(
     (s) =>

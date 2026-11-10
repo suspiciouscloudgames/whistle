@@ -3,7 +3,7 @@ const smooth = (low: number, high: number, value: number) => {
   return t * t * (3 - 2 * t);
 };
 
-/** Local device time; a daily artistic cycle, without location or a weather service. */
+
 export function daylightAt(date: Date) {
   const hour =
     date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GUST_GLSL } from "../../lib/environment-effects.ts";
 import { randomSequence } from "../../lib/terrain.ts";
 import { environmentAt, type Environment } from "../../lib/environment.ts";
 import {
@@ -23,7 +24,7 @@ type Leaf = {
   wind: THREE.Vector2;
 };
 
-// Curved individual leaves, rather than opaque balls or cones for the crown.
+
 function leafGeometry(species: TreeSpecies) {
   const p: number[] = [],
     indices: number[] = [],
@@ -122,6 +123,7 @@ export function makeTrees(
     const profile = treeAppearance(world.terrain?.seed ?? 0, tree.x, tree.z);
     profiles.push(profile);
     const { species, height: h, width, lean, rotation } = profile;
+    const branchStart = branches.length, leafStart = leaves[species].length;
     const random = randomSequence(profile.seed ^ 0x3b19);
     const root = new THREE.Vector3(
       tree.x * 2 - world.size + 1,
@@ -188,7 +190,9 @@ export function makeTrees(
       rz: number,
       count: number,
     ) => {
-      for (let n = 0; n < count; n++) {
+
+
+      for (let n = 0; n < Math.ceil(count * .6); n++) {
         const angle = random() * Math.PI * 2,
           y = random() * 2 - 1;
         const radial = Math.sqrt(1 - y * y) * Math.cbrt(random());
@@ -208,7 +212,7 @@ export function makeTrees(
             (random() - 0.5) * 1.7,
           ),
         );
-        const s = 0.65 + random() * 0.65;
+        const s = (0.65 + random() * 0.65) * 1.25;
         const color = base
           .clone()
           .multiplyScalar(0.7 + random() * 0.55 + (y + 1) * 0.05);
@@ -295,6 +299,21 @@ export function makeTrees(
       0.65,
       180,
     );
+
+    const shrink = (p: THREE.Vector3) => p.sub(root).multiplyScalar(profile.scale).add(root);
+    for (let i = branchStart; i < branches.length; i++) {
+      const b = branches[i];
+
+      b.a = shrink(b.a.clone());
+      b.b = shrink(b.b.clone());
+      b.radius *= profile.scale;
+      b.tipRadius *= profile.scale;
+    }
+    for (let i = leafStart; i < leaves[species].length; i++) {
+      const leaf = leaves[species][i];
+      shrink(leaf.p);
+      leaf.scale.multiplyScalar(profile.scale);
+    }
   }
   group.userData.profiles = profiles;
   const matrix = new THREE.Matrix4(),
@@ -369,7 +388,7 @@ export function makeTrees(
     geometry.computeBoundingSphere();
     const wood = new THREE.Mesh(geometry, material);
     wood.name = "generated-trunks";
-    wood.castShadow = wood.receiveShadow = true;
+    wood.receiveShadow = true;
     group.add(wood);
   }
   for (const species of TREE_SPECIES) {
@@ -392,14 +411,14 @@ export function makeTrees(
     material.onBeforeCompile = (shader) => {
       shader.uniforms.environmentTime = clock;
       shader.vertexShader =
-        "uniform float environmentTime; attribute vec2 fieldWind;\n" +
+        "uniform float environmentTime; attribute vec2 fieldWind;\n" + GUST_GLSL +
         shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace(
         "#include <begin_vertex>",
         `#include <begin_vertex>
       #ifdef USE_INSTANCING
         float phase=environmentTime*1.4+instanceMatrix[3].x*.7+instanceMatrix[3].z;
-        transformed.y+=sin(phase)*(.035+length(fieldWind)*.14)*position.z;
+        transformed.y+=sin(phase)*(.035+length(fieldWind)*(.02+.24*corridorGust(environmentTime)))*position.z;
       #endif`,
       );
     };
@@ -414,9 +433,23 @@ export function makeTrees(
       foliage.setColorAt(i, l.color);
     });
     foliage.name = `generated-leaves-${species}`;
-    foliage.castShadow = foliage.receiveShadow = true;
+    foliage.receiveShadow = true;
     foliage.computeBoundingSphere();
     group.add(foliage);
+  }
+  if (env.trees.length) {
+    const crowns = new THREE.InstancedMesh(new THREE.SphereGeometry(1,12,8),
+      new THREE.MeshBasicMaterial({colorWrite:false,depthWrite:false}),env.trees.length);
+    crowns.name="tree-shadow-crowns";
+    crowns.castShadow=true;
+    const q=new THREE.Quaternion();
+    env.trees.forEach((tree,i)=>{
+      const profile=profiles[i], k=profile.scale;
+      matrix.compose(new THREE.Vector3(tree.x*2-world.size+1,tree.height+profile.height*k*.7,tree.z*2-world.size+1),q,
+        new THREE.Vector3(profile.width*k,profile.height*k*.3,profile.width*k));
+      crowns.setMatrixAt(i,matrix);
+    });
+    crowns.computeBoundingSphere();group.add(crowns);
   }
   return group;
 }

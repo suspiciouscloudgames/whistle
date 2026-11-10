@@ -1,3 +1,4 @@
+import { isHole } from "./tile.ts";
 import type { World } from "./world.ts";
 type Ground = Pick<World, "size" | "terrain">;
 export const WATER_INSET = 0.06;
@@ -12,7 +13,7 @@ export function isWaterTile(world: Ground, x: number, z: number) {
       : world.terrain?.tiles[b * world.size + a];
   const wet = (a: number, b: number) => {
     const t = tile(a, b);
-    return !!t && t.height >= 0 && t.surface === "slick";
+    return !!t && !isHole(t) && t.height >= -1 && t.height <= 0 && t.surface === "slick";
   };
   return (
     wet(x, z) &&
@@ -29,24 +30,33 @@ export function waterWeights(
   x: number,
   z: number,
   level: (i: number) => number | null,
+  hole?: (i: number) => boolean,
 ) {
-  const fx = Math.floor(x),
-    fz = Math.floor(z),
-    tx = smooth(x - fx),
-    tz = smooth(z - fz);
+
+
+  const px = x + .18 * Math.sin(z * 1.37 + x * .43) + .09 * Math.sin(z * 3.1 - x * .71);
+  const pz = z + .18 * Math.sin(x * 1.19 - z * .37) + .09 * Math.cos(x * 2.7 + z * .83);
+  const radius = 1.18;
   const weights = new Map<number, number>();
-  for (const [dx, dz, w] of [
-    [0, 0, (1 - tx) * (1 - tz)],
-    [1, 0, tx * (1 - tz)],
-    [0, 1, (1 - tx) * tz],
-    [1, 1, tx * tz],
-  ]) {
-    const xx = fx + dx,
-      zz = fz + dz;
-    if (xx < 0 || zz < 0 || xx >= size || zz >= size) continue;
-    const h = level(zz * size + xx);
-    if (h !== null) weights.set(h, (weights.get(h) ?? 0) + w);
-  }
+  for (let zz = Math.max(0, Math.ceil(pz - radius)); zz <= Math.min(size - 1, Math.floor(pz + radius)); zz++)
+    for (let xx = Math.max(0, Math.ceil(px - radius)); xx <= Math.min(size - 1, Math.floor(px + radius)); xx++) {
+      const q = 1 - ((px - xx) ** 2 + (pz - zz) ** 2) / (radius * radius);
+      if (q <= 0) continue;
+      const h = level(zz * size + xx);
+      if (h !== null) {
+        weights.set(h, Math.min(1, (weights.get(h) ?? 0) + q * q * q));
+
+
+        if (hole) for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const hx = xx + dx, hz = zz + dz;
+          if (hx < 0 || hz < 0 || hx >= size || hz >= size || !hole(hz * size + hx)) continue;
+          const along = (x - xx) * dx + (z - zz) * dz;
+          const across = (x - xx) * dz - (z - zz) * dx;
+          const channel = smooth(1 - ((along - .4) / .7) ** 2 - (across / .3) ** 2);
+          weights.set(h, Math.max(weights.get(h) ?? 0, channel));
+        }
+      }
+    }
   return weights;
 }
 export function waterLevelAt(
@@ -54,11 +64,12 @@ export function waterLevelAt(
   x: number,
   z: number,
   level: (i: number) => number | null,
+  hole?: (i: number) => boolean,
 ) {
-  for (const [h, w] of waterWeights(size, x, z, level)) if (w > 0.8) return h;
+  for (const [h, w] of waterWeights(size, x, z, level, hole)) if (w > 0.8) return h;
   return null;
 }
-/** A waist-deep bed and a continuous bank meet the horizontal surface at its shore. */
+
 export function carveWaterBed(
   world: Ground,
   x: number,
@@ -70,11 +81,14 @@ export function carveWaterBed(
     isWaterTile(world, i % world.size, Math.floor(i / world.size))
       ? world.terrain!.tiles[i].height
       : null,
+    (i) => isHole(world.terrain?.tiles[i]),
   );
   for (const [h, w] of weights) {
-    if (w <= 0.5) continue;
-    const bankBlend = smooth((w - 0.5) / 0.22);
-    // Preserve the shoreline profile; deepen only the submerged interior.
+    if (w <= 0.25) continue;
+
+
+    const bankBlend = smooth((w - 0.25) / 0.35);
+
     const bed = h * unit - 0.32 * smooth((w - 0.72) / 0.28)
       - 0.48 * smooth((w - 0.84) / 0.16);
     return ground + (bed - ground) * bankBlend;

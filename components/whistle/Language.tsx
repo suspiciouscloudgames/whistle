@@ -35,6 +35,9 @@ const english: Record<string, string> = {
   기호: "Symbols",
   "바닥 높이": "Ground height",
   높이: "Height",
+  높이기: "Raise",
+  낮추기: "Lower",
+  구멍: "Hole",
   비우기: "Clear",
   "다른 지형": "Shuffle terrain",
   "단단한 바닥": "Firm ground",
@@ -184,7 +187,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     try {
       if (localStorage.getItem(STORAGE) === "en") updateLanguage("en");
     } catch {
-      /* Storage is optional. */
+
     }
   }, []);
   useEffect(() => {
@@ -195,7 +198,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(STORAGE, next);
     } catch {
-      /* Keep the in-memory choice. */
+
     }
   }, []);
   const t = useCallback(
