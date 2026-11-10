@@ -1651,6 +1651,7 @@ p {
 
 .preview-panel {
   align-self: start;
+  width: 100%;
   min-width: 0;
 }
 .preview-panel .live-preview {
@@ -1957,6 +1958,9 @@ p {
   .direct-palette .symbols {
     padding-top: 8px;
     gap: 6px;
+    flex-wrap: wrap;
+    overflow: visible;
+    flex: none;
   }
   .direct-palette .symbols > button {
     width: 40px;
@@ -1990,6 +1994,8 @@ p {
 }
 
 
+.topbar[hidden],
+.workspace[hidden] { display: none; }
 .studio.playing .play-shell { height: 100dvh; }
 .play-return {
   position: absolute;

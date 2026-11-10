@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import { lazy, Suspense, type ComponentProps } from "react";
 import { useLanguage, SceneLoading } from "@/components/whistle/Language";
 
@@ -80,6 +80,21 @@ export default function Home() {
     [share, setShare] = useState(false),
     [newDialog, setNewDialog] = useState(false),
     [playKey, setPlayKey] = useState(0);
+  const makeButton = useRef<HTMLButtonElement>(null);
+  const hasPlayed = useRef(false);
+  useLayoutEffect(() => {
+    if (!playing && !hasPlayed.current) return;
+    hasPlayed.current = true;
+    const overflow = document.body.style.overflow;
+    if (playing) document.body.style.overflow = "hidden";
+    window.scrollTo({top: 0, left: 0, behavior: "instant"});
+    if (!playing) makeButton.current?.focus({preventScroll: true});
+    const frame = requestAnimationFrame(() => window.scrollTo({top: 0, left: 0, behavior: "instant"}));
+    return () => {
+      cancelAnimationFrame(frame);
+      if (playing) document.body.style.overflow = overflow;
+    };
+  }, [playing]);
   const [movementMode, setMovementMode] = useState<"walk" | "crouch">("walk");
   const [layer, setLayer] = useState<"tiles" | "symbols">("tiles"),
     [surface, setSurface] = useState<Surface>("plain"),
@@ -520,10 +535,11 @@ export default function Home() {
   };
   return (
     <main className={`studio ${playing ? "playing" : ""}`}>
-      {!playing && <header className="topbar">
+      <header className="topbar" hidden={playing}>
         <h1>Whistle</h1>
         <nav className="view-tabs" aria-label={t("화면")}>
           <button
+            ref={makeButton}
             className={!playing ? "active" : ""}
             onClick={() => {
               if (playing) exit();
@@ -574,8 +590,8 @@ export default function Home() {
             </button>
           </div>
         </div>
-      </header>}
-      {playing ? (
+      </header>
+      {playing && (
         <section className="play-shell">
           <Scene
             key={playKey}
@@ -683,8 +699,8 @@ export default function Home() {
             {log[0]?.message}
           </span>
         </section>
-      ) : (
-        <div className="workspace">
+      )}
+        <div className="workspace" hidden={playing}>
           <aside className="palette direct-palette" aria-label={t("재료")}>
             <div className="layer-tabs compact-layer-tabs">
               <button
@@ -979,19 +995,18 @@ export default function Home() {
             <WeatherControls className="weather-mobile" value={world.weather}
               onChange={(weather) => change((w) => { w.weather = weather; })} />
             <div className="live-preview">
-              <Scene
+              {!playing && <Scene
                 world={world}
                 simulation={simulation}
                 mode="overview"
                 feedback={feedback}
-              />
+              />}
               <button onClick={enter} aria-label={t("세계에 들어가기")}>
                 <span aria-hidden="true">↗</span>
               </button>
             </div>
           </aside>
         </div>
-      )}
       <input
         ref={file}
         type="file"
