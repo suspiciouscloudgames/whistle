@@ -11,12 +11,15 @@ export function treeAppearance(seed: number, x: number, z: number) {
   const variantSeed = hash(seed ^ 0x71ee, x, z);
   const random = randomSequence(variantSeed);
   const species = TREE_SPECIES[Math.floor(random() * TREE_SPECIES.length)];
+  const stature = random();
+  const girth = random();
   return {
     seed: variantSeed,
     species,
     scale: 0.72,
-    height: (species === "maple" ? 3.7 : 4.8) + random() * 1.7,
-    width: 1.6 + random() * 0.8,
+    height: 2.4 + stature * (species === "maple" ? 2.8 : 3.8),
+    trunkRadius: 0.07 + Math.pow(girth, 1.35) * 0.35,
+    width: 1.0 + stature * 0.65 + girth * 0.45 + random() * 0.45,
     lean: (random() - 0.5) * (species === "pine" ? 1.4 : 0.5),
     rotation: random() * Math.PI * 2,
     tint: random(),

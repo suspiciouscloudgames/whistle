@@ -228,7 +228,7 @@ export function makeTrees(
     const trunkEnd =
       species === "zelkova" ? 0.6 : species === "maple" ? 0.58 : 1;
     for (let i = 0; i < 14; i++) {
-      const r = 0.16 + width * 0.025;
+      const r = profile.trunkRadius;
       branches.push({
         a: trunkAt((i / 14) * trunkEnd),
         b: trunkAt(((i + 1) / 14) * trunkEnd),
@@ -267,7 +267,7 @@ export function makeTrees(
       branch(
         start,
         end,
-        0.055 * (1 - t * 0.5),
+        profile.trunkRadius * 0.27 * (1 - t * 0.5),
         species === "pine" ? -0.18 : 0.18,
       );
       const forks = species === "pine" ? 3 : 4;
@@ -282,7 +282,7 @@ export function makeTrees(
               Math.sin(theta) * (0.35 + random() * 0.4),
             ),
           );
-        branch(start.clone().lerp(end, 0.65 + f * 0.07), tip, 0.018, 0.08);
+        branch(start.clone().lerp(end, 0.65 + f * 0.07), tip, profile.trunkRadius * 0.09, 0.08);
         crown(
           tip,
           species === "pine" ? 0.65 : 0.6,

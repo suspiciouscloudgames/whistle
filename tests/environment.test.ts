@@ -608,3 +608,28 @@ test("negative ground stays walkable and survives saves while old holes remain h
   (invalid.terrain!.tiles[1] as unknown as {hole: string}).hole = "false";
   assert.throws(() => validateWorld(invalid));
 });
+
+test("tree stature and girth vary independently while stones retain varied seeded surfaces and sizes", async () => {
+  const { stoneAppearance } = await import("../lib/stones.ts");
+  const trees = Array.from({ length: 120 }, (_, i) => treeAppearance(89, i % 12, Math.floor(i / 12)));
+  assert.ok(trees.some(t => t.height < 3.6 && t.trunkRadius > 0.3));
+  assert.ok(trees.some(t => t.height < 3.6 && t.trunkRadius < 0.12));
+  assert.ok(trees.some(t => t.height > 5 && t.trunkRadius < 0.15));
+  const w = empty();
+  w.terrain!.tiles.forEach(t => { t.surface = "rough"; });
+  const stones = makeTerrain(w, []).group.getObjectByName("scattered-stones") as THREE.InstancedMesh;
+  assert.ok(stones.count > 50 && stones.count <= 300);
+  const matrix = new THREE.Matrix4(), scales: number[] = [], colors = new Set<string>();
+  const color = new THREE.Color();
+  for (let i = 0; i < stones.count; i++) {
+    stones.getMatrixAt(i, matrix);
+    scales.push(new THREE.Vector3().setFromMatrixScale(matrix).x);
+    stones.getColorAt(i, color); colors.add(color.getHexString());
+  }
+  assert.ok(Math.min(...scales) < 0.1 && Math.max(...scales) > 0.5);
+  assert.ok(Math.max(...scales) <= 0.62 && colors.size >= 5);
+  const variants = stones.geometry.getAttribute("stoneVariant");
+  assert.equal(new Set(Array.from({ length: stones.count }, (_, i) => variants.getX(i))).size, 3);
+  const first = stoneAppearance(89, 1.25, 3.1);
+  assert.deepEqual(first, stoneAppearance(89, 1.25, 3.1));
+});

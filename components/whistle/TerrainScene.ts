@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { deriveEnvironment, environmentAt } from "../../lib/environment.ts";
 import { makeEnvironment } from "./EnvironmentScene.ts";
 import { makeGrass } from "./Grass.ts";
+import { stoneAppearance } from "../../lib/stones.ts";
 import { wetGround } from "../../lib/environment-effects.ts";
 import type { World } from "@/lib/world";
 import {
@@ -399,8 +400,7 @@ export function makeTerrain(world: World, structures: Structure[]) {
     x: number;
     y: number;
     z: number;
-    size: number;
-    angle: number;
+    appearance: ReturnType<typeof stoneAppearance>;
   }[] = [];
   const hasScatter = world.terrain?.tiles.some(
     (t) => !isHole(t) && t.surface === "rough",
@@ -425,8 +425,7 @@ export function makeTerrain(world: World, structures: Structure[]) {
         x: toScene(x),
         y: sample.height,
         z: toScene(z),
-        size: 0.06 + random() * 0.2,
-        angle: random() * 6.28,
+        appearance: stoneAppearance(world.terrain?.seed ?? 0, x, z),
       });
   }
   if (pebbles.length) {
@@ -455,22 +454,47 @@ export function makeTerrain(world: World, structures: Structure[]) {
     stoneGrain.magFilter = THREE.LinearFilter;
     stoneGrain.minFilter = THREE.LinearFilter;
     stoneGrain.needsUpdate = true;
-    const rocks = new THREE.InstancedMesh(
-      rockGeometry,
-      new THREE.MeshStandardMaterial({
-        color: "#777777",
-        roughness: 0.92,
-        bumpMap: stoneGrain,
-        bumpScale: 0.025,
-      }),
-      pebbles.length,
-    );
+    const stoneVariants = new Float32Array(pebbles.length * 3);
+    rockGeometry.setAttribute("stoneVariant", new THREE.InstancedBufferAttribute(stoneVariants, 3));
+    const stoneMaterial = new THREE.MeshStandardMaterial({
+      color: "#ffffff", roughness: 0.92, bumpMap: stoneGrain, bumpScale: 0.018,
+    });
+    stoneMaterial.onBeforeCompile = (shader) => {
+      shader.vertexShader = "attribute vec3 stoneVariant; varying vec3 vStoneVariant; varying vec3 vStonePoint;\n" + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\nvStoneVariant = stoneVariant; vStonePoint = position;");
+      shader.fragmentShader = `varying vec3 vStoneVariant;
+        varying vec3 vStonePoint;
+        float stoneHash(vec3 p) { return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453); }
+        float stoneNoise(vec3 p) {
+          vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+          return mix(mix(mix(stoneHash(i),stoneHash(i+vec3(1,0,0)),f.x),
+                         mix(stoneHash(i+vec3(0,1,0)),stoneHash(i+vec3(1,1,0)),f.x),f.y),
+                     mix(mix(stoneHash(i+vec3(0,0,1)),stoneHash(i+vec3(1,0,1)),f.x),
+                         mix(stoneHash(i+vec3(0,1,1)),stoneHash(i+vec3(1,1,1)),f.x),f.y),f.z);
+        }
+      ` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace("#include <color_fragment>", `#include <color_fragment>
+        vec3 sp = vStonePoint * vStoneVariant.y + vStoneVariant.z;
+        float mottling = stoneNoise(sp * 4.0);
+        float grain = stoneNoise(sp * 37.0);
+        float vein = 1.0-smoothstep(0.035,0.13,abs(sin(sp.y*8.0+sp.x*3.0+mottling*4.0)));
+        float finish = vStoneVariant.x;
+        float tone = finish < 0.5 ? 0.65+mottling*0.5+grain*0.3
+          : finish < 1.5 ? 0.8+mottling*0.3+vein*0.26
+          : 0.7+mottling*0.4+smoothstep(0.55,0.8,grain)*0.35;
+        diffuseColor.rgb *= tone;
+      `);
+    };
+    const rocks = new THREE.InstancedMesh(rockGeometry, stoneMaterial, pebbles.length);
     pebbles.forEach((r, i) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r.angle);
+      const a = r.appearance;
+      stoneVariants.set([a.texture, a.grain, a.offset], i * 3);
+      rocks.setColorAt(i, new THREE.Color(a.color));
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a.angle);
       matrix.compose(
-        p.set(r.x, r.y + r.size * 0.25, r.z),
+        p.set(r.x, r.y + a.size * a.height * 0.25, r.z),
         q,
-        scale.set(r.size, r.size, r.size * 0.85),
+        scale.set(a.size, a.size * a.height, a.size * a.depth),
       );
       rocks.setMatrixAt(i, matrix);
     });
