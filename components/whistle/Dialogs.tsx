@@ -420,9 +420,6 @@ export function ShareDialog({
         </button>
         <button onClick={() => downloadWorld(world)}>{t("파일 저장")}</button>
       </div>
-      <p className="access-note">
-        {t("비공개 사이트는 접근 권한이 필요합니다.")}
-      </p>
       {error && (
         <p className="error" role="alert">
           {t(error)}

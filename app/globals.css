@@ -746,12 +746,6 @@ p {
   font-size: 11px;
   padding: 9px 15px;
 }
-.access-note {
-  font-size: 10px;
-  color: #999;
-  margin-top: 24px;
-  line-height: 1.7;
-}
 .error {
   font-size: 11px;
   color: #555;

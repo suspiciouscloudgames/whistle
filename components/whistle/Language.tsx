@@ -133,8 +133,6 @@ const english: Record<string, string> = {
   "세계 링크": "World link",
   복사됨: "Copied",
   복사: "Copy",
-  "비공개 사이트는 접근 권한이 필요합니다.":
-    "Private sites require access permission.",
   "링크 용량 초과. 파일로 저장하세요.":
     "Too large for a link. Save a file instead.",
   "링크 생성 실패": "Could not create a link",
