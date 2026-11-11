@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.svg" />
+    <title>Whistle · Pd 오디오 테스트</title>
+    <style>
+      body { max-width: 780px; margin: 40px auto; padding: 0 20px; font-family: system-ui, sans-serif; line-height: 1.6; color: #222; background: #fafafa; }
+      fieldset { margin: 24px 0; padding: 20px; border: 1px solid #bbb; }
+      label { display: inline-flex; flex-direction: column; margin: 6px 16px 12px 0; }
+      input { width: 100px; padding: 6px; }
+      button { padding: 8px 14px; margin: 4px; cursor: pointer; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #eee; padding: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Pd 오디오 테스트</h1>
+    <p>테스트 입력을 Pd 패치에 보내 소리 변화를 확인합니다. 볼륨을 낮춘 뒤 시작하세요.</p>
+    <button id="start">오디오 시작</button>
+    <button id="stop" disabled>오디오 종료</button>
+    <button id="mute" disabled>음소거</button>
+    <p id="status" role="status">시작 전</p>
+    <fieldset id="edit-controls" disabled>
+      <legend>1 · 2D 배치 이벤트</legend>
+      <label>X (0–1)<input id="edit-x" type="number" min="0" max="1" step="0.1" value="0.5" /></label>
+      <label>Z (0–1)<input id="edit-z" type="number" min="0" max="1" step="0.1" value="0.5" /></label>
+      <label>겹침 (0–1)<input id="overlap" type="number" min="0" max="1" step="0.1" value="0" /></label>
+      <button id="edit">배치 소리</button>
+      <p>겹침이 커질수록 짧은 확인음의 음높이가 올라갑니다.</p>
+    </fieldset>
+    <fieldset id="player-controls" disabled>
+      <legend>2 · 3D 이동 상태</legend>
+      <label>X (0–1)<input id="player-x" type="number" min="0" max="1" step="0.1" value="0.5" /></label>
+      <label>Y (높이)<input id="player-y" type="number" step="0.1" value="0" /></label>
+      <label>Z (0–1)<input id="player-z" type="number" min="0" max="1" step="0.1" value="0" /></label>
+      <label>속도 (0–4)<input id="speed" type="number" min="0" max="4" step="0.1" value="1" /></label>
+      <label>풀 밀도 (0–1)<input id="grass" type="number" min="0" max="1" step="0.1" value="0" /></label>
+      <label>바위 지면 (0–1)<input id="rough" type="number" min="0" max="1" step="0.1" value="0" /></label>
+      <button id="player">이동 상태 보내기</button>
+      <p>X는 좌우 출력, Z·풀·바위는 음높이, 속도는 크기를 바꿉니다. 속도 0은 무음입니다. Y는 수신값만 확인합니다.</p>
+    </fieldset>
+    <p>패치 출력 측정: <output id="meter">—</output></p>
+    <p>패치가 실제 수신한 최근 메시지:</p>
+    <pre id="messages">—</pre>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
