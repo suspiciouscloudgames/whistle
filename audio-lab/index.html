@@ -34,11 +34,10 @@
       <label>X (0–1)<input id="player-x" type="number" min="0" max="1" step="0.1" value="0.5" /></label>
       <label>Y (높이)<input id="player-y" type="number" step="0.1" value="0" /></label>
       <label>Z (0–1)<input id="player-z" type="number" min="0" max="1" step="0.1" value="0" /></label>
-      <label>속도 (0–4)<input id="speed" type="number" min="0" max="4" step="0.1" value="1" /></label>
       <label>풀 밀도 (0–1)<input id="grass" type="number" min="0" max="1" step="0.1" value="0" /></label>
       <label>바위 지면 (0–1)<input id="rough" type="number" min="0" max="1" step="0.1" value="0" /></label>
       <button id="player">이동 상태 보내기</button>
-      <p>X는 좌우 출력, Z·풀·바위는 음높이, 속도는 크기를 바꿉니다. 속도 0은 무음입니다. Y는 수신값만 확인합니다.</p>
+      <p>X는 좌우 출력, Z·풀·바위는 음높이를 바꿉니다. 소리 크기는 고정이며 Y는 수신값만 확인합니다.</p>
     </fieldset>
     <p>패치 출력 측정: <output id="meter">—</output></p>
     <p>패치가 실제 수신한 최근 메시지:</p>

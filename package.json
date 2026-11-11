@@ -11,15 +11,16 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "npm run test:unit && npm run test:browser",
-    "test:unit": "node --experimental-strip-types --test tests/engine.test.ts tests/environment.test.ts tests/symbols.test.ts tests/derivation.test.ts",
+    "test:unit": "node --experimental-strip-types --test tests/engine.test.ts tests/environment.test.ts tests/symbols.test.ts tests/derivation.test.ts tests/game-audio.test.ts",
     "test:browser": "playwright test",
     "test:storage": "playwright test tests/browser/storage.spec.ts",
     "benchmark:editor": "node tests/performance/editor.mjs",
     "audio:build": "node scripts/build-audio.mjs",
-    "dev:audio": "npm run audio:build && vite --host 127.0.0.1",
-    "test:audio": "npm run audio:build && playwright test tests/browser/audio.spec.ts",
+    "dev:audio": "npm run dev",
+    "test:audio": "npm run audio:build && playwright test tests/browser/audio.spec.ts tests/browser/game-audio.spec.ts",
     "pretest:browser": "npm run audio:build",
-    "prebuild": "npm run audio:build"
+    "prebuild": "npm run audio:build",
+    "predev": "npm run audio:build"
   },
   "dependencies": {
     "react": "19.2.6",

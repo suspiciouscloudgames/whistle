@@ -7,6 +7,7 @@ import { softenEdges } from "./Atmosphere";
 import { makeTerrain } from "./TerrainScene";
 import { addSymbolVisuals, makeSymbolExperience } from "./SymbolExperience";
 import { floorHeight, tileAt, terrainSample, SURFACES } from "@/lib/terrain";
+import type { PlayerAudioFrame } from "@/lib/audio/game-parameters";
 import type { WorldDerivation } from "@/lib/world-derivation";
 import { environmentAt } from "@/lib/environment";
 import { makeWeather } from "./WeatherScene";
@@ -39,6 +40,7 @@ type Props = {
   derivation: WorldDerivation;
   mode: "overview" | "play";
   onPlayer?: (p: Player) => void;
+  onAudioFrame?: (frame: PlayerAudioFrame) => void;
   onControlsReset?: () => void;
   controls?: MutableRefObject<Set<string>>;
   className?: string;
@@ -114,6 +116,7 @@ export default function Scene({
   derivation,
   mode,
   onPlayer,
+  onAudioFrame,
   onControlsReset,
   controls,
   className = "",
@@ -121,6 +124,8 @@ export default function Scene({
   clock = deviceTime,
 }: Props) {
   const { t } = useLanguage();
+  const audioCallback = useRef(onAudioFrame);
+  audioCallback.current = onAudioFrame;
   const feedbackRef = useRef(feedback);
   feedbackRef.current = feedback;
   const resetControls = useRef(onControlsReset);
@@ -243,6 +248,7 @@ export default function Scene({
     let lastGround = floorHeight(world, player.x, player.z, structures) ?? 0;
     let respawnFade = 0;
     let walkedDistance = 0, groundBob = 0, groundRoll = 0;
+    let audioReport = 0;
     let pitch = -0.12,
       targetPitch = pitch,
       targetYaw = player.yaw,
@@ -573,6 +579,7 @@ export default function Scene({
       }
       if (mode === "play") {
         const previousX = player.x, previousZ = player.z;
+        let audioFeet: number | null = null;
         if (falling) {
           falling.elapsed += dt;
           const frame = fallFrame(falling.originY, falling.elapsed);
@@ -701,6 +708,7 @@ export default function Scene({
           } else if (floor === null && groundAge <= COYOTE_SECONDS) {
             feet = lastGround - 5 * groundAge * groundAge;
           }
+          audioFeet = feet;
           if (feet === null) {
             falling = { originY: eyeY, elapsed: 0 };
             clear();
@@ -723,6 +731,20 @@ export default function Scene({
         const dry = underfoot.water === null || (ground !== null && ground >= underfoot.water);
         const roughness = grounded && dry && ground !== null
           ? terrainSample(worldRef.current, player.x, player.z).weights.rough : 0;
+        if (audioCallback.current) {
+          const onGround = !falling && !jump && respawnFade === 0 && ground !== null;
+          if (time - audioReport > 80) {
+            audioCallback.current({
+              x: player.x, y: audioFeet ?? ground ?? eyeY - EYE_HEIGHT, z: player.z,
+              size: worldRef.current.size,
+              grass: underfoot.grass,
+              rough: dry && ground !== null
+                ? (grounded ? roughness : terrainSample(worldRef.current, player.x, player.z).weights.rough) : 0,
+              water: dry ? 0 : 1, grounded: onGround, falling: falling !== null, yaw: player.yaw,
+            });
+            audioReport = time;
+          }
+        }
         const motion = roughGroundMotion(walkedDistance, roughness, dt > 0 ? traveled / dt : 0, !!controls?.current.has("crouch"));
         const settle = 1 - Math.exp(-14 * dt);
         groundBob += (motion.y - groundBob) * settle;

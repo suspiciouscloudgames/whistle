@@ -31,13 +31,14 @@ test("Pd edit events change the emitted tone and decay back to silence", async (
   }
 });
 
-test("Pd receives 3D position and maps movement, materials and stereo output", async ({ page }) => {
+test("Pd receives position and materials without speed and uses a fixed level", async ({ page }) => {
   await start(page);
+  await expect(page.locator("#speed")).toHaveCount(0);
   await page.locator("#player-x").fill("0");
   await page.locator("#player-y").fill("2.5");
   const send = page.getByRole("button", { name: "이동 상태 보내기", exact: true });
   await send.click();
-  await expect.poll(async () => (await received(page))["whistle-player"]).toEqual([0, 2.5, 0, 1, 0, 0]);
+  await expect.poll(async () => (await received(page))["whistle-player"]).toEqual([0, 2.5, 0, 0, 0]);
   await expect.poll(async () => {
     const [l, r] = await levels(page);
     return l.rms > 0.01 && r.rms < 0.0001 && Math.abs(l.hz - 220) < 16;
@@ -48,21 +49,17 @@ test("Pd receives 3D position and maps movement, materials and stereo output", a
   await page.locator("#grass").fill("1");
   await page.locator("#rough").fill("0.5");
   await send.click();
-  await expect.poll(async () => (await received(page))["whistle-player"]).toEqual([1, 2.5, 0.5, 1, 1, 0.5]);
+  await expect.poll(async () => (await received(page))["whistle-player"]).toEqual([1, 2.5, 0.5, 1, 0.5]);
   await expect.poll(async () => {
     const [l, r] = await levels(page);
     return r.rms > 0.01 && l.rms < 0.0001 && Math.abs(r.hz - 770) < 16;
   }).toBe(true);
-  await page.locator("#speed").fill("2");
-  await send.click();
-  await expect.poll(async () => (await levels(page))[1].rms).toBeGreaterThan(0.025);
+  await expect.poll(async () => (await levels(page))[1].rms).toBeLessThan(0.016);
   await page.getByRole("button", { name: "음소거", exact: true }).click();
   await expect.poll(async () => (await levels(page))[1].rms).toBeLessThan(0.0001);
   await page.getByRole("button", { name: "음소거 해제", exact: true }).click();
-  await expect.poll(async () => (await levels(page))[1].rms).toBeGreaterThan(0.025);
-  await page.locator("#speed").fill("0");
-  await send.click();
-  await expect.poll(async () => (await levels(page))[1].rms).toBeLessThan(0.0001);
+  await expect.poll(async () => (await levels(page))[1].rms).toBeGreaterThan(0.01);
+  await expect.poll(async () => (await levels(page))[1].rms).toBeLessThan(0.016);
 });
 
 test("audio starts only on click, closes cleanly and can retry a failed patch load", async ({ page }) => {

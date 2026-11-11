@@ -19,6 +19,8 @@ import { isHole, type TerrainTool } from "@/lib/tile";
 import { downloadWorld } from "@/lib/sharing";
 import { createTerrainWorld } from "@/lib/create-world";
 import { useWorldDocument } from "@/components/whistle/useWorldDocument";
+import { useGameAudio } from "@/components/whistle/useGameAudio";
+import { editSound } from "@/lib/audio/game-parameters";
 import { useWorldPersistence } from "@/components/whistle/useWorldPersistence";
 import { WeatherControls } from "@/components/whistle/WeatherControls";
 import { EditorToolbar } from "@/components/whistle/EditorToolbar";
@@ -82,16 +84,22 @@ export default function Home() {
     controls = useRef(new Set<string>()),
     padPressedAt = useRef(new Map<string, number>()),
     file = useRef<HTMLInputElement>(null),
-    audio = useRef<AudioContext | null>(null),
     toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   simulationRef.current = simulation;
+  const notify = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 4200);
+  }, []);
+  const audio = useGameAudio(notify);
   const resetSimulation = useCallback((w: World) => {
+    audio.reset();
     const next = createSimulation(w);
     simulationRef.current = next;
     setSimulation(next);
     setLog([]);
     player.current = { ...w.start, yaw: 0 };
-  }, []);
+  }, [audio]);
   const {
     world, getWorld, deriveWorld, feedback, canUndo, canRedo,
     commit: updateWorld, edit: change, load: loadDocument,
@@ -107,17 +115,13 @@ export default function Home() {
       setPlacingStart(false);
     }
   }, [world.assets, selectedAsset]);
-  const notify = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 4200);
-  }, []);
   const handleLoad = useCallback((incoming: World, beforeUpgrade: World) => {
+    audio.stop();
     loadDocument(incoming, beforeUpgrade);
     setSelectedAsset(incoming.assets[0].id);
     setSelected(null);
     setPlaying(false);
-  }, [loadDocument]);
+  }, [audio, loadDocument]);
   const handleImport = useCallback((imported: World) => {
     updateWorld(imported);
     setSelectedAsset(imported.assets[0].id);
@@ -135,45 +139,6 @@ export default function Home() {
   const redo = () => {
     if (redoDocument()) setSelected(null);
   };
-  const initAudio = () => {
-    if (!audio.current || audio.current.state === "closed") {
-      try {
-        audio.current = new AudioContext();
-      } catch {
-        return;
-      }
-    }
-    void audio.current.resume().catch(() => {});
-  };
-  const sound = (event: Event) => {
-    if (!audio.current || audio.current.state === "closed") return;
-    const ctx = audio.current,
-      osc = ctx.createOscillator(),
-      gain = ctx.createGain(),
-      pan = ctx.createStereoPanner();
-    const p = player.current,
-      distance = Math.hypot(event.x - p.x, event.z - p.z),
-      angle = Math.atan2(event.x - p.x, -(event.z - p.z)) - p.yaw;
-    osc.type = "sine";
-    osc.frequency.value = [261.63, 329.63, 392, 523.25, 659.25][
-      Math.abs(Math.round(event.x + event.z)) % 5
-    ];
-    gain.gain.setValueAtTime(0, ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(
-      0.12 / (1 + distance * 0.3),
-      ctx.currentTime + 0.025,
-    );
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.1);
-    pan.pan.value = Math.sin(angle);
-    osc.connect(gain).connect(pan).connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 1.2);
-    osc.onended = () => {
-      osc.disconnect();
-      gain.disconnect();
-      pan.disconnect();
-    };
-  };
   const step = useCallback(() => {
     if (player.current.falling) return;
     const next = stepSimulation(
@@ -185,23 +150,24 @@ export default function Home() {
     setSimulation(next);
     if (next.events.length) {
       setLog((prev) => [...next.events, ...prev].slice(0, 12));
-      next.events.filter((e) => e.action === "sound").forEach(sound);
+      next.events.filter((e) => e.action === "sound").forEach((event) => audio.event(event, player.current));
     }
-  }, [getWorld]);
+  }, [audio, getWorld]);
   useEffect(() => {
     if (!playing) return;
     const interval = setInterval(step, 700);
     return () => clearInterval(interval);
   }, [playing, step]);
   const enter = () => {
-    initAudio();
     reset();
+    audio.play();
     setPlaying(true);
     setPlayKey((k) => k + 1);
     controls.current.clear();
     setMovementMode("walk");
   };
   const exit = () => {
+    audio.stop();
     setPlaying(false);
     controls.current.clear();
     setMovementMode("walk");
@@ -217,10 +183,6 @@ export default function Home() {
   }, [playing]);
   useEffect(
     () => () => {
-      const context = audio.current;
-      audio.current = null;
-      if (context && context.state !== "closed")
-        void context.close().catch(() => {});
       if (toastTimer.current) clearTimeout(toastTimer.current);
     },
     [],
@@ -279,7 +241,13 @@ export default function Home() {
       clickedCell(i % world.size, Math.floor(i / world.size));
       return;
     }
+    const before = getWorld();
     paintDocument(cells, erase, { layer, surface, terrainTool, selectedAsset });
+    const after = getWorld();
+    if (before !== after) {
+      const sound = editSound(before, after, cells, deriveWorld(after));
+      if (sound) audio.edit(sound);
+    }
   };
   const reroll = () =>
     change((w) => {
@@ -360,6 +328,7 @@ export default function Home() {
             derivation={derivation}
             mode="play"
             onPlayer={(p) => (player.current = p)}
+            onAudioFrame={audio.movement}
             controls={controls}
             onControlsReset={() => setMovementMode("walk")}
           />

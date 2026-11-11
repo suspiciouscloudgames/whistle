@@ -28,9 +28,13 @@ function loadRuntime(url: string) {
   });
 }
 
-export type EditSound = { x: number; z: number; overlap: number };
+export type EditSound = {
+  x: number; z: number; overlap: number;
+  asset?: string; action?: string; surface?: string;
+};
 export type PlayerSound = {
-  x: number; y: number; z: number; speed: number; grass: number; rough: number;
+  x: number; y: number; z: number; grass: number; rough: number;
+  grounded?: boolean; falling?: boolean; yaw?: number; water?: number;
 };
 
 const bounded = (value: number, min: number, max: number) => {
@@ -89,14 +93,21 @@ export async function createPdSession(
     return {
       context,
       node,
-      edit({ x, z, overlap }: EditSound) {
-        send("whistle-edit", [bounded(x, 0, 1), bounded(z, 0, 1), bounded(overlap, 0, 1)]);
+      edit({ x, z, overlap, asset, action, surface }: EditSound) {
+        send("whistle-edit", [bounded(x, 0, 1), bounded(z, 0, 1), bounded(overlap, 0, 1),
+          ...(asset === undefined ? [] : [asset, action ?? "paint", surface ?? "plain"])]);
       },
-      player({ x, y, z, speed, grass, rough }: PlayerSound) {
+      player({ x, y, z, grass, rough, grounded, falling, yaw, water }: PlayerSound) {
         send("whistle-player", [
           bounded(x, 0, 1), bounded(y, -1000, 1000), bounded(z, 0, 1),
-          bounded(speed, 0, 4), bounded(grass, 0, 1), bounded(rough, 0, 1),
+          bounded(grass, 0, 1), bounded(rough, 0, 1),
+          ...(grounded === undefined ? [] : [Number(grounded), Number(!!falling),
+            bounded(yaw ?? 0, -1e6, 1e6), bounded(water ?? 0, 0, 1)]),
         ]);
+      },
+      stopPlayer() { send("whistle-player-stop", ["bang"]); },
+      event(frequency: number, gain: number, pan: number) {
+        send("whistle-event", [bounded(frequency, 20, 20000), bounded(gain, 0, 0.12), bounded(pan, -1, 1)]);
       },
       mute(muted: boolean) { send("whistle-gate", [muted ? 0 : 1]); },
       async close() {

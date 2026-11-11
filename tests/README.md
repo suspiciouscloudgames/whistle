@@ -13,6 +13,8 @@ Use `npm run test:browser` for all browser tests.
 Use `npm run test:audio` for the WebPd WASM patch and AudioWorklet checks.
 Audio assets are compiled automatically before browser tests and production builds.
 See `audio/README.md` for the parameter contract and manual listening page.
+Game audio tests also cover real grid edits, walking across materials, jumping,
+stopping, blur/return, existing sound rules and recovery from audio load failures.
 
 Browser tests use isolated browser storage and start their own local Vite server
 on port 5189. Leave that port free. Failure traces are saved in `output/playwright/`.
