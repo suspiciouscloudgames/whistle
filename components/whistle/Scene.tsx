@@ -6,7 +6,8 @@ import type { Asset, World, Simulation, Player } from "@/lib/world";
 import { softenEdges } from "./Atmosphere";
 import { makeTerrain } from "./TerrainScene";
 import { addSymbolVisuals, makeSymbolExperience } from "./SymbolExperience";
-import { deriveStructures, floorHeight, tileAt, terrainSample, SURFACES } from "@/lib/terrain";
+import { floorHeight, tileAt, terrainSample, SURFACES } from "@/lib/terrain";
+import type { WorldDerivation } from "@/lib/world-derivation";
 import { environmentAt } from "@/lib/environment";
 import { makeWeather } from "./WeatherScene";
 import { WEATHER } from "@/lib/weather";
@@ -35,6 +36,7 @@ const EYE_HEIGHT = 1.35;
 type Props = {
   world: World;
   simulation: Simulation;
+  derivation: WorldDerivation;
   mode: "overview" | "play";
   onPlayer?: (p: Player) => void;
   onControlsReset?: () => void;
@@ -109,6 +111,7 @@ function disposeGroup(g: THREE.Object3D) {
 export default function Scene({
   world,
   simulation,
+  derivation,
   mode,
   onPlayer,
   onControlsReset,
@@ -134,6 +137,8 @@ export default function Scene({
   actors.current = simulation.actors;
   callback.current = onPlayer;
   worldRef.current = world;
+  const derivationRef = useRef(derivation);
+  derivationRef.current = derivation;
   useEffect(() => {
     const el = host.current;
     if (!el) return;
@@ -203,11 +208,11 @@ export default function Scene({
     horizon.receiveShadow = true;
     softenEdges(horizon, world.size);
     scene.add(horizon);
-    let structures = deriveStructures(world, actors.current);
-    let terrain = makeTerrain(world, structures);
+    let structures = derivationRef.current.structures;
+    let terrain = makeTerrain(world, structures, derivationRef.current.environment);
     softenEdges(terrain.group, world.size);
     scene.add(terrain.group);
-    let terrainSignature = "";
+    let terrainSignature = derivationRef.current.key;
     const camera =
       mode === "play"
         ? new THREE.PerspectiveCamera(66, 1, 0.08, 80)
@@ -270,13 +275,10 @@ export default function Scene({
       previousActors = actors.current;
       previousAssets = worldRef.current.assets;
       previousTerrain = worldRef.current.terrain;
-      const signature = JSON.stringify([
-        worldRef.current.terrain,
-        actors.current.map((a) => [a.asset, a.x, a.z, a.removed]),
-      ]);
-      if (signature !== terrainSignature) {
-        terrainSignature = signature;
-        structures = deriveStructures(worldRef.current, actors.current);
+      const nextDerivation = derivationRef.current;
+      if (nextDerivation.key !== terrainSignature) {
+        terrainSignature = nextDerivation.key;
+        structures = nextDerivation.structures;
         for (const fog of fadingMist) {scene.remove(fog.mesh);disposeGroup(fog.mesh);}
         fadingMist.length=0;
         const oldMist: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[]=[];
@@ -287,7 +289,7 @@ export default function Scene({
         }
         scene.remove(terrain.group);
         disposeGroup(terrain.group);
-        terrain = makeTerrain(worldRef.current, structures);
+        terrain = makeTerrain(worldRef.current, structures, nextDerivation.environment);
         softenEdges(terrain.group, world.size);
         scene.add(terrain.group);
       }

@@ -2,13 +2,14 @@ import type { World } from "./world.ts";
 import { deriveStructures, tileAt } from "./terrain.ts";
 import { deriveEnvironment } from "./environment.ts";
 import { drainSources } from "./environment-effects.ts";
+import type { WorldDerivation } from "./world-derivation.ts";
 
 export type CellChange = { index: number; result: boolean; removed: boolean };
 export type PlacementFeedback = { id: number; cells: CellChange[] };
 
-function snapshot(world: World) {
-  const structures = deriveStructures(world);
-  const environment = deriveEnvironment(world, structures);
+function snapshot(world: World, derivation?: WorldDerivation) {
+  const structures = derivation?.structures ?? deriveStructures(world);
+  const environment = derivation?.environment ?? deriveEnvironment(world, structures);
   const drains = drainSources(world,environment);
   return environment.cells.map((c, i) => {
     const x = i % world.size,
@@ -42,10 +43,15 @@ function snapshot(world: World) {
 }
 
 
-export function placementChanges(before: World, after: World): CellChange[] {
+export function placementChanges(
+  before: World,
+  after: World,
+  beforeDerivation?: WorldDerivation,
+  afterDerivation?: WorldDerivation,
+): CellChange[] {
   if (before.size !== after.size) return [];
-  const previous = snapshot(before),
-    next = snapshot(after);
+  const previous = snapshot(before, beforeDerivation),
+    next = snapshot(after, afterDerivation);
   return next.flatMap((cell, index) => {
     const old = previous[index];
     const result = JSON.stringify(old.results) !== JSON.stringify(cell.results);

@@ -10,7 +10,11 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --experimental-strip-types --test tests/engine.test.ts tests/environment.test.ts tests/symbols.test.ts"
+    "test": "npm run test:unit && npm run test:browser",
+    "test:unit": "node --experimental-strip-types --test tests/engine.test.ts tests/environment.test.ts tests/symbols.test.ts tests/derivation.test.ts",
+    "test:browser": "playwright test",
+    "test:storage": "playwright test tests/browser/storage.spec.ts",
+    "benchmark:editor": "node tests/performance/editor.mjs"
   },
   "dependencies": {
     "react": "19.2.6",
@@ -18,12 +22,13 @@
     "three": "0.180.0"
   },
   "devDependencies": {
-    "vite": "8.0.13",
-    "@vitejs/plugin-react": "6.0.2",
-    "typescript": "5.9.3",
+    "@playwright/test": "^1.65.0",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@types/three": "0.180.0"
+    "@types/three": "0.180.0",
+    "@vitejs/plugin-react": "6.0.2",
+    "typescript": "5.9.3",
+    "vite": "8.0.13"
   }
 }

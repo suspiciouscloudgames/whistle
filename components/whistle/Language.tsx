@@ -65,6 +65,7 @@ const english: Record<string, string> = {
   "새 지형 열기": "New terrain",
   "파일 저장": "Save file",
   "준비 중": "Getting ready",
+  "불러오기 실패 · 자동 저장 중지": "Load failed · Autosave paused",
   "저장 중": "Saving",
   "이 브라우저에 저장됨": "Saved in this browser",
   "저장 공간 부족 · 파일로 보관": "Storage full · Save a file",

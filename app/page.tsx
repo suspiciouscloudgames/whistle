@@ -19,25 +19,22 @@ import {
   type Simulation,
 } from "@/lib/world";
 import { editTile, isHole, type TerrainTool } from "@/lib/tile";
-import { deriveEnvironment } from "@/lib/environment";
+import { createWorldDeriver, samePlacement } from "@/lib/world-derivation";
 import {
   placementChanges,
   type PlacementFeedback,
 } from "@/lib/placement-feedback";
 import { decodeWorld, downloadWorld } from "@/lib/sharing";
 import { WeatherControls } from "@/components/whistle/WeatherControls";
-import { PaintGrid } from "@/components/whistle/PaintGrid";
-import {
-  EnvironmentTile,
-  environmentTileKind,
-} from "@/components/whistle/EnvironmentTile";
+import { EditorToolbar } from "@/components/whistle/EditorToolbar";
+import { EditorPalette } from "@/components/whistle/EditorPalette";
+import { EditorBoard } from "@/components/whistle/EditorBoard";
+import { PlayControls } from "@/components/whistle/PlayControls";
 import {
   generateTerrain,
   upgradeTerrain,
   flatTerrain,
-  deriveStructures,
   tileAt,
-  SURFACES,
   type Surface,
 } from "@/lib/terrain";
 import { ObjectArt } from "@/components/whistle/Art";
@@ -62,7 +59,7 @@ function terrainWorld() {
 }
 const STORAGE = "whistle.world.v2";
 export default function Home() {
-  const { language, setLanguage, t } = useLanguage();
+  const { t } = useLanguage();
   const [world, setWorld] = useState<World>(starterWorld),
     [ready, setReady] = useState(false),
     [saveStatus, setSaveStatus] = useState("준비 중"),
@@ -109,27 +106,11 @@ export default function Home() {
     },
     [],
   );
-  const structures = useMemo(
-    () => deriveStructures(world, simulation.actors),
-    [world, simulation.actors],
+  const deriveWorld = useMemo(createWorldDeriver, []);
+  const derivation = useMemo(
+    () => deriveWorld(world, simulation.actors),
+    [deriveWorld, world, simulation.actors],
   );
-  const environment = useMemo(
-    () => deriveEnvironment(world, structures),
-    [world, structures],
-  );
-  const environmentLabels = (i: number) => {
-    const c = environment.cells[i];
-    return [
-      c.grass > 0 ? t("풀") : "",
-      c.tree ? t("나무") : "",
-      c.water !== null ? t("물") : "",
-      c.fog > 0.05 ? t("안개") : "",
-      Math.hypot(c.windX, c.windZ) > 0.1 ? t("바람") : "",
-      c.light < 0.7 ? t("그늘") : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-  };
   const history = useRef<World[]>([]),
     future = useRef<World[]>([]),
     worldRef = useRef(world),
@@ -153,23 +134,34 @@ export default function Home() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 4200);
   }, []);
+  const autosaveAllowed = useRef(false);
+  const resumeAutosave = useCallback(() => {
+    // A successful load (or explicit replacement) makes the current world safe to save.
+    if (new URLSearchParams(location.hash.slice(1)).has("world")) {
+      window.history.replaceState(null, "", location.pathname + location.search);
+    }
+    autosaveAllowed.current = true;
+    setReady(true);
+  }, []);
   useEffect(() => {
     let active = true,
       generation = 0;
     const load = async (initial: boolean) => {
       const encoded = new URLSearchParams(location.hash.slice(1)).get("world");
-      if (!initial && !encoded) return;
+      if (!initial && encoded === null) return;
       const request = ++generation;
+      // Block even an already-scheduled save while the incoming data is checked.
+      autosaveAllowed.current = false;
       setReady(false);
       try {
         let incoming: World | undefined;
-        if (encoded) incoming = await decodeWorld(encoded);
+        if (encoded !== null) incoming = await decodeWorld(encoded);
         else {
           const stored = localStorage.getItem(STORAGE);
-          if (stored) incoming = validateWorld(JSON.parse(stored));
+          if (stored !== null) incoming = validateWorld(JSON.parse(stored));
           else {
             const previous = localStorage.getItem("whistle.world.v1");
-            if (previous)
+            if (previous !== null)
               incoming = abstractWorld(validateWorld(JSON.parse(previous)));
           }
         }
@@ -194,20 +186,14 @@ export default function Home() {
           future.current = [];
           player.current = { ...incoming.start, yaw: 0 };
         }
-        if (encoded) {
-          window.history.replaceState(
-            null,
-            "",
-            location.pathname + location.search,
-          );
-        }
+        resumeAutosave();
       } catch (e) {
-        if (active && request === generation)
+        if (active && request === generation) {
+          setSaveStatus("불러오기 실패 · 자동 저장 중지");
           notify(
             e instanceof Error ? e.message : "저장한 세계를 불러오지 못했어요.",
           );
-      } finally {
-        if (active && request === generation) setReady(true);
+        }
       }
     };
     void load(true);
@@ -217,11 +203,12 @@ export default function Home() {
       active = false;
       window.removeEventListener("hashchange", changed);
     };
-  }, [notify]);
+  }, [notify, resumeAutosave]);
   useEffect(() => {
     if (!ready) return;
     setSaveStatus("저장 중");
     const timeout = setTimeout(() => {
+      if (!autosaveAllowed.current) return;
       try {
         localStorage.setItem(STORAGE, JSON.stringify(world));
         setSaveStatus("이 브라우저에 저장됨");
@@ -239,12 +226,13 @@ export default function Home() {
     player.current = { ...w.start, yaw: 0 };
   }, []);
   const revealChanges = useCallback((next: World) => {
-    const cells = placementChanges(worldRef.current, next);
+    const before = worldRef.current;
+    const cells = placementChanges(before, next, deriveWorld(before), deriveWorld(next));
     if (!cells.length) return;
     setFeedback({ id: ++feedbackId.current, cells });
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
     feedbackTimer.current = setTimeout(() => setFeedback(null), 1400);
-  }, []);
+  }, [deriveWorld]);
   const updateWorld = useCallback(
     (next: World) => {
       revealChanges(next);
@@ -459,6 +447,10 @@ export default function Home() {
           });
       }
     }
+    if (samePlacement(worldRef.current, next)) {
+      if (first) strokeBase.current = null;
+      return;
+    }
     if (first) updateWorld(next);
     else {
       revealChanges(next);
@@ -518,6 +510,7 @@ export default function Home() {
         validateWorld(JSON.parse(await f.text())),
       );
       updateWorld(imported);
+      resumeAutosave();
       setSelectedAsset(imported.assets[0].id);
       setSelected(null);
     } catch (e) {
@@ -529,74 +522,30 @@ export default function Home() {
   const newWorld = () => {
     const next = terrainWorld();
     updateWorld(next);
+    resumeAutosave();
     setSelected(null);
     setSelectedAsset(next.assets[0].id);
     setNewDialog(false);
   };
   return (
     <main className={`studio ${playing ? "playing" : ""}`}>
-      <header className="topbar" hidden={playing}>
-        <h1>Whistle</h1>
-        <nav className="view-tabs" aria-label={t("화면")}>
-          <button
-            ref={makeButton}
-            className={!playing ? "active" : ""}
-            onClick={() => {
-              if (playing) exit();
-            }}
-          >
-            {t("만들기")}
-          </button>
-          <button
-            className={playing ? "active" : ""}
-            aria-pressed={playing}
-            onClick={() => {
-              if (!playing) enter();
-            }}
-          >
-            {t("플레이")}
-          </button>
-        </nav>
-        <div className="header-tools">
-          <div className="language-switch" role="group" aria-label={t("언어")}>
-            <button
-              lang="ko"
-              aria-label="한국어"
-              aria-pressed={language === "ko"}
-              onClick={() => setLanguage("ko")}
-            >
-              KO
-            </button>
-            <span aria-hidden="true">/</span>
-            <button
-              lang="en"
-              aria-label="English"
-              aria-pressed={language === "en"}
-              onClick={() => setLanguage("en")}
-            >
-              EN
-            </button>
-          </div>
-          <div className="file-actions">
-            <button onClick={() => setNewDialog(true)}>{t("다시 시작")}</button>
-            <button onClick={() => file.current?.click()}>
-              {t("불러오기")}
-            </button>
-            <button
-              onClick={() => setShare(true)}
-              aria-description={t(saveStatus)}
-            >
-              {t("공유")}
-            </button>
-          </div>
-        </div>
-      </header>
+      <EditorToolbar
+        playing={playing}
+        saveStatus={saveStatus}
+        makeButton={makeButton}
+        onEnter={enter}
+        onExit={exit}
+        onNew={() => setNewDialog(true)}
+        onImport={() => file.current?.click()}
+        onShare={() => setShare(true)}
+      />
       {playing && (
         <section className="play-shell">
           <Scene
             key={playKey}
             world={world}
             simulation={simulation}
+            derivation={derivation}
             mode="play"
             onPlayer={(p) => (player.current = p)}
             controls={controls}
@@ -606,391 +555,71 @@ export default function Home() {
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /></svg>
           </button>
           <div className="crosshair" />
-          <div className="touch-controls" aria-label={t("이동 터치패드")}>
-            {(
-              [
-                {
-                  key: "forward",
-                  command: "step",
-                  className: "direction-forward",
-                  label: "앞으로",
-                  glyph: "⌃",
-                },
-                {
-                  key: "left",
-                  command: "turn-left",
-                  className: "direction-left",
-                  label: "왼쪽으로 회전",
-                  glyph: "‹",
-                },
-                {
-                  key: "backward",
-                  command: "backstep",
-                  className: "direction-back",
-                  label: "뒤로",
-                  glyph: "⌄",
-                },
-                {
-                  key: "right",
-                  command: "turn-right",
-                  className: "direction-right",
-                  label: "오른쪽으로 회전",
-                  glyph: "›",
-                },
-              ] as const
-            ).map(({ key, command, className, label, glyph }) => (
-              <button
-                key={key}
-                className={className}
-                aria-label={t(label)}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  padPressedAt.current.set(key, performance.now());
-                  controls.current.add(key);
-                }}
-                onPointerUp={() => {
-                  controls.current.delete(key);
-                  if (
-                    performance.now() - (padPressedAt.current.get(key) ?? 0) <
-                    180
-                  )
-                    controls.current.add(command);
-                  padPressedAt.current.delete(key);
-                }}
-                onPointerCancel={() => {
-                  controls.current.delete(key);
-                  padPressedAt.current.delete(key);
-                }}
-                onLostPointerCapture={() => controls.current.delete(key)}
-                onClick={(e) => {
-                  if (e.detail === 0) controls.current.add(command);
-                }}
-              >
-                <span aria-hidden="true">{glyph}</span>
-              </button>
-            ))}
-            <div className="movement-modes">
-              <button aria-label={t("점프")}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  if (!player.current.falling) controls.current.add("jump");
-                }}
-                onClick={(e) => {
-                  if (e.detail === 0 && !player.current.falling) controls.current.add("jump");
-                }}>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 14l4-4 4 4" /></svg>
-              </button>
-              <button aria-label={t("기어가기")}
-                aria-pressed={movementMode === "crouch"}
-                onClick={() => {
-                  if (player.current.falling) return;
-                  const next = movementMode === "crouch" ? "walk" : "crouch";
-                  controls.current.delete("run");
-                  controls.current.delete("crouch");
-                  if (next === "crouch") controls.current.add("crouch");
-                  setMovementMode(next);
-                }}>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10l4 4 4-4" /></svg>
-              </button>
-            </div>
-          </div>
+          <PlayControls
+            controls={controls}
+            padPressedAt={padPressedAt}
+            player={player}
+            movementMode={movementMode}
+            onMovementModeChange={setMovementMode}
+          />
           <span className="sr-only" aria-live="polite">
             {log[0]?.message}
           </span>
         </section>
       )}
         <div className="workspace" hidden={playing}>
-          <aside className="palette direct-palette" aria-label={t("재료")}>
-            <div className="layer-tabs compact-layer-tabs">
-              <button
-                aria-label={t("타일")}
-                aria-pressed={layer === "tiles"}
-                className={layer === "tiles" ? "active" : ""}
-                onClick={() => {
-                  setLayer("tiles");
-                  setPlacingStart(false);
-                }}
-              >
-                <svg
-                  className="layer-icon"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M3 3h18v18H3zM9 3v18M15 3v18M3 9h18M3 15h18"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  />
-                </svg>
-              </button>
-              <button
-                aria-label={t("기호")}
-                aria-pressed={layer === "symbols"}
-                className={layer === "symbols" ? "active" : ""}
-                onClick={() => {
-                  setLayer("symbols");
-                  setPlacingStart(false);
-                }}
-              >
-                <svg
-                  className="layer-icon"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="12" r="9" fill="currentColor" />
-                </svg>
-              </button>
-            </div>
-            {layer === "tiles" ? (
-              <div className="tile-palette">
-                <div className="surface-choices">
-                  {SURFACES.map((entry) => (
-                    <button
-                      key={entry.id}
-                      aria-label={t(entry.name)}
-                      aria-pressed={
-                        layer === "tiles" &&
-                        surface === entry.id &&
-                        terrainTool === "surface" &&
-                        !placingStart
-                      }
-                      className={`surface-choice ${layer === "tiles" && surface === entry.id && terrainTool === "surface" && !placingStart ? "active" : ""}`}
-                      onClick={() => {
-                        setLayer("tiles");
-                        setPlacingStart(false);
-                        setSurface(entry.id);
-                        setTerrainTool("surface");
-                      }}
-                    >
-                      <span className={`surface-swatch surface-${entry.id}`} />
-                    </button>
-                  ))}
-                </div>
-                <div className="terrain-options">
-                  <div className="height-choices" aria-label={t("바닥 높이")}>
-                    {(["raise", "lower"] as const).map((tool) => (
-                      <button
-                        key={tool}
-                        aria-label={t(tool === "raise" ? "높이기" : "낮추기")}
-                        aria-pressed={
-                          layer === "tiles" && terrainTool === tool && !placingStart
-                        }
-                        className={
-                          layer === "tiles" && terrainTool === tool && !placingStart
-                            ? "active"
-                            : ""
-                        }
-                        onClick={() => {
-                          setLayer("tiles");
-                          setPlacingStart(false);
-                          setTerrainTool(tool);
-                        }}
-                      >
-                        {tool === "raise" ? "＋" : "−"}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="terrain-actions">
-                    <button
-                      className={`clear-tile ${layer === "tiles" && terrainTool === "hole" ? "active" : ""}`}
-                      aria-label={t("구멍")}
-                      aria-pressed={layer === "tiles" && terrainTool === "hole"}
-                      onClick={() => {
-                        setLayer("tiles");
-                        setPlacingStart(false);
-                        setTerrainTool("hole");
-                      }}
-                    >
-                      <span aria-hidden="true" />
-                    </button>
-                    <button aria-label={t("다른 지형")} onClick={reroll}>
-                      <span aria-hidden="true">↻</span>
-                    </button>
-                  </div>
-                  <WeatherControls className="weather-desktop" value={world.weather}
-                    onChange={(weather) => change((w) => { w.weather = weather; })} />
-                </div>
-              </div>
-            ) : (
-              <div className="symbols">
-                {world.assets.map((a) => (
-                  <button
-                    key={a.id}
-                    aria-label={`${a.name} · ${t("이미지 편집")}`}
-                    aria-pressed={
-                      layer === "symbols" &&
-                      selectedAsset === a.id &&
-                      !placingStart
-                    }
-                    className={
-                      layer === "symbols" &&
-                      selectedAsset === a.id &&
-                      !placingStart
-                        ? "active"
-                        : ""
-                    }
-                    onClick={() => {
-                      setLayer("symbols");
-                      setSelectedAsset(a.id);
-                      setSelected(null);
-                      setPlacingStart(false);
-                      setEditingAsset(a);
-                      setShowMaker(true);
-                    }}
-                  >
-                    <ObjectArt asset={a} />
-                    {a.image && (
-                      <img className="symbol-media" src={a.image} alt="" />
-                    )}
-                  </button>
-                ))}
-                <button
-                  aria-label={t("시작점")}
-                  aria-pressed={placingStart}
-                  className={
-                    placingStart ? "active start-choice" : "start-choice"
-                  }
-                  onClick={() => {
-                    setLayer("symbols");
-                    setPlacingStart(!placingStart);
-                  }}
-                >
-                  ◎
-                </button>
-              </div>
-            )}
-          </aside>
-          <section className="canvas-panel">
-            <div className="canvas-area">
-              <PaintGrid
-                size={world.size}
-                occupied={(i) =>
-                  world.objects.some(
-                    (o) =>
-                      o.x === i % world.size &&
-                      o.z === Math.floor(i / world.size),
-                  )
-                }
-                canHold={layer === "symbols" && !placingStart}
-                onPaint={paint}
-                onEnd={() => {
-                  strokeBase.current = null;
-                }}
-                onHold={(i) =>
-                  setSelected(
-                    world.objects.find(
-                      (o) =>
-                        o.x === i % world.size &&
-                        o.z === Math.floor(i / world.size),
-                    )?.id ?? null,
-                  )
-                }
-                cellClass={(i) => {
-                  const tile = tileAt(
-                    world,
-                    i % world.size,
-                    Math.floor(i / world.size),
-                  )!;
-                  const c = environment.cells[i];
-                  return `surface-${environmentTileKind(c) ? "plain" : tile.surface} level-${tile.height} ${isHole(tile) ? "tile-void" : ""} ${c.grass ? "has-grass" : ""} ${c.water !== null ? "has-water" : ""} ${c.tree ? "has-tree" : ""} ${c.fog > 0.05 ? "has-fog" : ""}`;
-                }}
-                label={(i) => {
-                  const x = i % world.size,
-                    z = Math.floor(i / world.size),
-                    tile = tileAt(world, x, z)!;
-                  const object = world.objects.find(
-                    (o) => o.x === x && o.z === z,
-                  );
-                  return `${String.fromCharCode(65 + x)}${z + 1} ${isHole(tile) ? t("빈틈") : `${t("높이")} ${tile.height} ${t(SURFACES.find((s) => s.id === tile.surface)!.name)}`}${object ? " " + world.assets.find((a) => a.id === object.asset)?.name : ""}${x === world.start.x && z === world.start.z ? " " + t("시작점") : ""} ${environmentLabels(i)}`;
-                }}
-                renderCell={(i) => {
-                  const x = i % world.size,
-                    z = Math.floor(i / world.size),
-                    tile = tileAt(world, x, z)!;
-                  const actor = simulation.actors.find(
-                    (a) => a.x === x && a.z === z && !a.removed,
-                  );
-                  const asset = world.assets.find((a) => a.id === actor?.asset);
-                  const generated = structures.filter(
-                    (t) => t.x === x && t.z === z,
-                  );
-                  const conditions = environment.cells[i];
-                  const reaction = feedback?.cells.find((c) => c.index === i);
-                  return (
-                    <>
-                      <span
-                        className="environment-light"
-                        aria-hidden="true"
-                        style={{ opacity: (1 - conditions.light) * 0.2 }}
-                      />
-                      <EnvironmentTile cell={conditions} />
-                      {tile.height !== 0 && !isHole(tile) && (
-                        <span className="tile-height">{tile.height}</span>
-                      )}
-                      {generated.map((t) => (
-                        <span
-                          key={t.key}
-                          className={`generated generated-${t.kind}`}
-                          style={
-                            t.kind === "stairs"
-                              ? {
-                                  transform: `rotate(${t.dx ? t.dx * 90 : t.dz === 1 ? 180 : 0}deg)`,
-                                }
-                              : t.kind === "bridge" && t.dz
-                                ? { transform: "rotate(90deg)" }
-                                : undefined
-                          }
-                        />
-                      ))}
-                      {asset && actor && (
-                        <span
-                          className="placed-art"
-                          style={{
-                            transform: `rotate(${actor.rotation}deg) scale(${actor.scale})`,
-                          }}
-                        >
-                          <ObjectArt asset={asset} />
-                        </span>
-                      )}
-                      {!!actor?.marks.length && (
-                        <span className="cell-mark">{actor.marks[0]}</span>
-                      )}
-                      {x === world.start.x && z === world.start.z && (
-                        <span className="start-marker" />
-                      )}
-                      {reaction && (
-                        <span
-                          key={`reaction-${feedback!.id}`}
-                          aria-hidden="true"
-                          className={`placement-reaction ${reaction.result ? "result-reaction" : "touch-reaction"} ${reaction.removed ? "removed-reaction" : ""}`}
-                        />
-                      )}
-                    </>
-                  );
-                }}
-              />
-            </div>
-            <div className="canvas-tools">
-              <div className="history-tools">
-                <button
-                  aria-label={t("되돌리기")}
-                  disabled={!history.current.length}
-                  onClick={undo}
-                >
-                  ↶
-                </button>
-                <button
-                  aria-label={t("다시 실행")}
-                  disabled={!future.current.length}
-                  onClick={redo}
-                >
-                  ↷
-                </button>
-              </div>
-            </div>
-          </section>
+          <EditorPalette
+            assets={world.assets}
+            weather={world.weather}
+            layer={layer}
+            surface={surface}
+            terrainTool={terrainTool}
+            selectedAsset={selectedAsset}
+            placingStart={placingStart}
+            onSelectLayer={(next) => {
+              setLayer(next);
+              setPlacingStart(false);
+            }}
+            onSelectSurface={(next) => {
+              setLayer("tiles");
+              setPlacingStart(false);
+              setSurface(next);
+              setTerrainTool("surface");
+            }}
+            onSelectTerrainTool={(next) => {
+              setLayer("tiles");
+              setPlacingStart(false);
+              setTerrainTool(next);
+            }}
+            onReroll={reroll}
+            onWeatherChange={(weather) => change((w) => { w.weather = weather; })}
+            onEditAsset={(asset) => {
+              setLayer("symbols");
+              setSelectedAsset(asset.id);
+              setSelected(null);
+              setPlacingStart(false);
+              setEditingAsset(asset);
+              setShowMaker(true);
+            }}
+            onToggleStart={() => {
+              setLayer("symbols");
+              setPlacingStart(!placingStart);
+            }}
+          />
+          <EditorBoard
+            world={world}
+            actors={simulation.actors}
+            derivation={derivation}
+            feedback={feedback}
+            canHold={layer === "symbols" && !placingStart}
+            canUndo={history.current.length > 0}
+            canRedo={future.current.length > 0}
+            onPaint={paint}
+            onEnd={() => { strokeBase.current = null; }}
+            onSelectObject={setSelected}
+            onUndo={undo}
+            onRedo={redo}
+          />
           <aside className="preview-panel" aria-label={t("배치 결과")}>
             <WeatherControls className="weather-mobile" value={world.weather}
               onChange={(weather) => change((w) => { w.weather = weather; })} />
@@ -998,6 +627,7 @@ export default function Home() {
               {!playing && <Scene
                 world={world}
                 simulation={simulation}
+                derivation={derivation}
                 mode="overview"
                 feedback={feedback}
               />}

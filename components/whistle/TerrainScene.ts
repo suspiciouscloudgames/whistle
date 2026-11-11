@@ -1,6 +1,6 @@
 import { isHole } from "../../lib/tile.ts";
 import * as THREE from "three";
-import { deriveEnvironment, environmentAt } from "../../lib/environment.ts";
+import { deriveEnvironment, environmentAt, type Environment } from "../../lib/environment.ts";
 import { makeEnvironment } from "./EnvironmentScene.ts";
 import { makeGrass } from "./Grass.ts";
 import { stoneAppearance } from "../../lib/stones.ts";
@@ -14,10 +14,10 @@ import {
 } from "../../lib/terrain.ts";
 
 
-export function makeTerrain(world: World, structures: Structure[]) {
+export function makeTerrain(world: World, structures: Structure[], derivedEnvironment?: Environment) {
   const group = new THREE.Group(),
     wind = { value: 0 };
-  const environment = deriveEnvironment(world, structures);
+  const environment = derivedEnvironment ?? deriveEnvironment(world, structures);
   const toScene = (n: number) => n * 2 - world.size + 1;
   const random = randomSequence(world.terrain?.seed ?? 0);
   const palette = {
