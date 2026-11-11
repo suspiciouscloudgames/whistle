@@ -5,11 +5,8 @@ import { useLanguage, SceneLoading } from "@/components/whistle/Language";
 
 import {
   starterWorld,
-  abstractWorld,
   createSimulation,
   stepSimulation,
-  validateWorld,
-  clone,
   uid,
   type World,
   type Asset,
@@ -18,13 +15,11 @@ import {
   type Event,
   type Simulation,
 } from "@/lib/world";
-import { editTile, isHole, type TerrainTool } from "@/lib/tile";
-import { createWorldDeriver, samePlacement } from "@/lib/world-derivation";
-import {
-  placementChanges,
-  type PlacementFeedback,
-} from "@/lib/placement-feedback";
-import { decodeWorld, downloadWorld } from "@/lib/sharing";
+import { isHole, type TerrainTool } from "@/lib/tile";
+import { downloadWorld } from "@/lib/sharing";
+import { createTerrainWorld } from "@/lib/create-world";
+import { useWorldDocument } from "@/components/whistle/useWorldDocument";
+import { useWorldPersistence } from "@/components/whistle/useWorldPersistence";
 import { WeatherControls } from "@/components/whistle/WeatherControls";
 import { EditorToolbar } from "@/components/whistle/EditorToolbar";
 import { EditorPalette } from "@/components/whistle/EditorPalette";
@@ -32,8 +27,6 @@ import { EditorBoard } from "@/components/whistle/EditorBoard";
 import { PlayControls } from "@/components/whistle/PlayControls";
 import {
   generateTerrain,
-  upgradeTerrain,
-  flatTerrain,
   tileAt,
   type Surface,
 } from "@/lib/terrain";
@@ -48,26 +41,14 @@ const LazyScene = lazy(() => import("@/components/whistle/Scene"));
 function Scene(props: ComponentProps<typeof LazyScene>) {
   return <Suspense fallback={<SceneLoading />}><LazyScene {...props} /></Suspense>;
 }
-function terrainWorld() {
-  const w = starterWorld();
-  w.objects = [];
-  w.terrain = generateTerrain(
-    w.size,
-    crypto.getRandomValues(new Uint32Array(1))[0],
-  );
-  return w;
-}
-const STORAGE = "whistle.world.v2";
 export default function Home() {
   const { t } = useLanguage();
-  const [world, setWorld] = useState<World>(starterWorld),
-    [ready, setReady] = useState(false),
-    [saveStatus, setSaveStatus] = useState("준비 중"),
-    [selectedAsset, setSelectedAsset] = useState("circle"),
+  const initialWorld = useMemo(starterWorld, []);
+  const [selectedAsset, setSelectedAsset] = useState("circle"),
     [selected, setSelected] = useState<string | null>(null),
     [placingStart, setPlacingStart] = useState(false);
   const [simulation, setSimulation] = useState<Simulation>(() =>
-      createSimulation(starterWorld()),
+      createSimulation(initialWorld),
     ),
     [playing, setPlaying] = useState(false),
     [log, setLog] = useState<Event[]>([]),
@@ -96,33 +77,30 @@ export default function Home() {
   const [layer, setLayer] = useState<"tiles" | "symbols">("tiles"),
     [surface, setSurface] = useState<Surface>("plain"),
     [terrainTool, setTerrainTool] = useState<TerrainTool>("surface");
-  const strokeBase = useRef<World | null>(null);
-  const [feedback, setFeedback] = useState<PlacementFeedback | null>(null);
-  const feedbackId = useRef(0);
-  const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
-    },
-    [],
-  );
-  const deriveWorld = useMemo(createWorldDeriver, []);
-  const derivation = useMemo(
-    () => deriveWorld(world, simulation.actors),
-    [deriveWorld, world, simulation.actors],
-  );
-  const history = useRef<World[]>([]),
-    future = useRef<World[]>([]),
-    worldRef = useRef(world),
-    simulationRef = useRef(simulation),
-    player = useRef<Player>({ ...world.start, yaw: 0 }),
+  const simulationRef = useRef(simulation),
+    player = useRef<Player>({ ...initialWorld.start, yaw: 0 }),
     controls = useRef(new Set<string>()),
     padPressedAt = useRef(new Map<string, number>()),
     file = useRef<HTMLInputElement>(null),
     audio = useRef<AudioContext | null>(null),
     toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  worldRef.current = world;
   simulationRef.current = simulation;
+  const resetSimulation = useCallback((w: World) => {
+    const next = createSimulation(w);
+    simulationRef.current = next;
+    setSimulation(next);
+    setLog([]);
+    player.current = { ...w.start, yaw: 0 };
+  }, []);
+  const {
+    world, getWorld, deriveWorld, feedback, canUndo, canRedo,
+    commit: updateWorld, edit: change, load: loadDocument,
+    undo: undoDocument, redo: redoDocument, paint: paintDocument, endStroke,
+  } = useWorldDocument(initialWorld, resetSimulation);
+  const derivation = useMemo(
+    () => deriveWorld(world, simulation.actors),
+    [deriveWorld, world, simulation.actors],
+  );
   useEffect(() => {
     if (!world.assets.some((a) => a.id === selectedAsset)) {
       setSelectedAsset(world.assets[0]?.id ?? "");
@@ -134,141 +112,28 @@ export default function Home() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 4200);
   }, []);
-  const autosaveAllowed = useRef(false);
-  const resumeAutosave = useCallback(() => {
-    // A successful load (or explicit replacement) makes the current world safe to save.
-    if (new URLSearchParams(location.hash.slice(1)).has("world")) {
-      window.history.replaceState(null, "", location.pathname + location.search);
-    }
-    autosaveAllowed.current = true;
-    setReady(true);
-  }, []);
-  useEffect(() => {
-    let active = true,
-      generation = 0;
-    const load = async (initial: boolean) => {
-      const encoded = new URLSearchParams(location.hash.slice(1)).get("world");
-      if (!initial && encoded === null) return;
-      const request = ++generation;
-      // Block even an already-scheduled save while the incoming data is checked.
-      autosaveAllowed.current = false;
-      setReady(false);
-      try {
-        let incoming: World | undefined;
-        if (encoded !== null) incoming = await decodeWorld(encoded);
-        else {
-          const stored = localStorage.getItem(STORAGE);
-          if (stored !== null) incoming = validateWorld(JSON.parse(stored));
-          else {
-            const previous = localStorage.getItem("whistle.world.v1");
-            if (previous !== null)
-              incoming = abstractWorld(validateWorld(JSON.parse(previous)));
-          }
-        }
-        if (!incoming) incoming = terrainWorld();
-        const previousTerrain = incoming;
-        incoming = upgradeTerrain(incoming);
-        if (!active || request !== generation) return;
-        if (incoming) {
-          setWorld(incoming);
-          worldRef.current = incoming;
-          const sim = createSimulation(incoming);
-          setSimulation(sim);
-          simulationRef.current = sim;
-          setSelectedAsset(incoming.assets[0].id);
-          setSelected(null);
-          setLog([]);
-          setPlaying(false);
-          history.current =
-            incoming !== previousTerrain ? [clone(previousTerrain)] : [];
-          if (history.current[0]?.terrain)
-            history.current[0].terrain.generatorVersion = 2;
-          future.current = [];
-          player.current = { ...incoming.start, yaw: 0 };
-        }
-        resumeAutosave();
-      } catch (e) {
-        if (active && request === generation) {
-          setSaveStatus("불러오기 실패 · 자동 저장 중지");
-          notify(
-            e instanceof Error ? e.message : "저장한 세계를 불러오지 못했어요.",
-          );
-        }
-      }
-    };
-    void load(true);
-    const changed = () => void load(false);
-    window.addEventListener("hashchange", changed);
-    return () => {
-      active = false;
-      window.removeEventListener("hashchange", changed);
-    };
-  }, [notify, resumeAutosave]);
-  useEffect(() => {
-    if (!ready) return;
-    setSaveStatus("저장 중");
-    const timeout = setTimeout(() => {
-      if (!autosaveAllowed.current) return;
-      try {
-        localStorage.setItem(STORAGE, JSON.stringify(world));
-        setSaveStatus("이 브라우저에 저장됨");
-      } catch {
-        setSaveStatus("저장 공간 부족 · 파일로 보관");
-      }
-    }, 350);
-    return () => clearTimeout(timeout);
-  }, [world, ready]);
-  const reset = useCallback((w: World = worldRef.current) => {
-    const next = createSimulation(w);
-    simulationRef.current = next;
-    setSimulation(next);
-    setLog([]);
-    player.current = { ...w.start, yaw: 0 };
-  }, []);
-  const revealChanges = useCallback((next: World) => {
-    const before = worldRef.current;
-    const cells = placementChanges(before, next, deriveWorld(before), deriveWorld(next));
-    if (!cells.length) return;
-    setFeedback({ id: ++feedbackId.current, cells });
-    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
-    feedbackTimer.current = setTimeout(() => setFeedback(null), 1400);
-  }, [deriveWorld]);
-  const updateWorld = useCallback(
-    (next: World) => {
-      revealChanges(next);
-      history.current.push(clone(worldRef.current));
-      if (history.current.length > 40) history.current.shift();
-      future.current = [];
-      setWorld(next);
-      worldRef.current = next;
-      reset(next);
-    },
-    [reset, revealChanges],
-  );
-  const change = (fn: (w: World) => void) => {
-    const next = clone(worldRef.current);
-    fn(next);
-    updateWorld(next);
-  };
-  const undo = () => {
-    const prev = history.current.pop();
-    if (!prev) return;
-    future.current.push(clone(world));
-    revealChanges(prev);
-    setWorld(prev);
-    worldRef.current = prev;
-    reset(prev);
+  const handleLoad = useCallback((incoming: World, beforeUpgrade: World) => {
+    loadDocument(incoming, beforeUpgrade);
+    setSelectedAsset(incoming.assets[0].id);
     setSelected(null);
+    setPlaying(false);
+  }, [loadDocument]);
+  const handleImport = useCallback((imported: World) => {
+    updateWorld(imported);
+    setSelectedAsset(imported.assets[0].id);
+    setSelected(null);
+  }, [updateWorld]);
+  const { saveStatus, resumeAutosave, importFile: loadFile } = useWorldPersistence({
+    world, onLoad: handleLoad, onImport: handleImport, notify,
+  });
+  const reset = useCallback((w: World = getWorld()) => {
+    resetSimulation(w);
+  }, [getWorld, resetSimulation]);
+  const undo = () => {
+    if (undoDocument()) setSelected(null);
   };
   const redo = () => {
-    const next = future.current.pop();
-    if (!next) return;
-    history.current.push(clone(world));
-    revealChanges(next);
-    setWorld(next);
-    worldRef.current = next;
-    reset(next);
-    setSelected(null);
+    if (redoDocument()) setSelected(null);
   };
   const initAudio = () => {
     if (!audio.current || audio.current.state === "closed") {
@@ -312,7 +177,7 @@ export default function Home() {
   const step = useCallback(() => {
     if (player.current.falling) return;
     const next = stepSimulation(
-      worldRef.current,
+      getWorld(),
       simulationRef.current,
       player.current,
     );
@@ -322,7 +187,7 @@ export default function Home() {
       setLog((prev) => [...next.events, ...prev].slice(0, 12));
       next.events.filter((e) => e.action === "sound").forEach(sound);
     }
-  }, []);
+  }, [getWorld]);
   useEffect(() => {
     if (!playing) return;
     const interval = setInterval(step, 700);
@@ -414,50 +279,7 @@ export default function Home() {
       clickedCell(i % world.size, Math.floor(i / world.size));
       return;
     }
-    const first = !strokeBase.current;
-    if (first) strokeBase.current = clone(worldRef.current);
-    const next = clone(strokeBase.current!);
-    if (layer === "tiles") {
-      next.terrain ??= flatTerrain(next.size);
-      for (const i of cells) {
-        if (terrainTool === "hole" && i === next.start.z * next.size + next.start.x)
-          continue;
-        next.terrain.tiles[i] = editTile(next.terrain.tiles[i], terrainTool, surface);
-      }
-    } else {
-      const asset = next.assets.find((a) => a.id === selectedAsset);
-      if (!asset) return;
-      for (const i of cells) {
-        const x = i % next.size,
-          z = Math.floor(i / next.size);
-        if (erase)
-          next.objects = next.objects.filter((o) => o.x !== x || o.z !== z);
-        else if (
-          next.objects.length < 250 &&
-          !next.objects.some((o) => o.x === x && o.z === z) &&
-          !(asset.solid && x === next.start.x && z === next.start.z)
-        )
-          next.objects.push({
-            id: uid(),
-            asset: asset.id,
-            x,
-            z,
-            rotation: 0,
-            scale: asset.defaultScale ?? 1,
-          });
-      }
-    }
-    if (samePlacement(worldRef.current, next)) {
-      if (first) strokeBase.current = null;
-      return;
-    }
-    if (first) updateWorld(next);
-    else {
-      revealChanges(next);
-      setWorld(next);
-      worldRef.current = next;
-      reset(next);
-    }
+    paintDocument(cells, erase, { layer, surface, terrainTool, selectedAsset });
   };
   const reroll = () =>
     change((w) => {
@@ -504,23 +326,13 @@ export default function Home() {
   const importFile = async (f?: File) => {
     if (!f) return;
     try {
-      if (f.size > 6000000)
-        throw Error("6MB 이하의 세계 파일을 선택해 주세요.");
-      const imported = upgradeTerrain(
-        validateWorld(JSON.parse(await f.text())),
-      );
-      updateWorld(imported);
-      resumeAutosave();
-      setSelectedAsset(imported.assets[0].id);
-      setSelected(null);
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "세계 파일을 읽을 수 없어요.");
+      await loadFile(f);
     } finally {
       if (file.current) file.current.value = "";
     }
   };
   const newWorld = () => {
-    const next = terrainWorld();
+    const next = createTerrainWorld();
     updateWorld(next);
     resumeAutosave();
     setSelected(null);
@@ -612,10 +424,10 @@ export default function Home() {
             derivation={derivation}
             feedback={feedback}
             canHold={layer === "symbols" && !placingStart}
-            canUndo={history.current.length > 0}
-            canRedo={future.current.length > 0}
+            canUndo={canUndo}
+            canRedo={canRedo}
             onPaint={paint}
-            onEnd={() => { strokeBase.current = null; }}
+            onEnd={endStroke}
             onSelectObject={setSelected}
             onUndo={undo}
             onRedo={redo}

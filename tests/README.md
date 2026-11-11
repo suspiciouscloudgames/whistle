@@ -17,6 +17,8 @@ They cover failed shared-link and stored-data loads, preservation during edits,
 normal autosave, and recovery through a valid file import or an explicit restart.
 Editor tests cover toolbar and palette actions, language changes, file selection,
 and desktop/mobile play transitions with preserved editor state and focus.
+Document tests cover undo/redo after file imports and restarts, shared-link loads
+that reset history and exit play, and the undo checkpoint for legacy terrain upgrades.
 
 Terrain tests also check rebuild counts, unchanged painting, shared environment
 calculations, bridge placement, and undo/redo. The four terrain fingerprints in
