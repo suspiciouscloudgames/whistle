@@ -18,6 +18,10 @@ stopping, blur/return, existing sound rules and recovery from audio load failure
 
 Browser tests use isolated browser storage and start their own local Vite server
 on port 5189. Leave that port free. Failure traces are saved in `output/playwright/`.
+UWB tests cover simulated positions, calibration, terrain sampling, Pd messages,
+invalid input, audio cancellation and read-only world imports. They set the browser's
+device pixel ratio to 0.5 to limit software WebGL rasterization cost; the real scene
+and Pd patch still run. Application rendering settings are unchanged.
 They cover failed shared-link and stored-data loads, preservation during edits,
 normal autosave, and recovery through a valid file import or an explicit restart.
 Editor tests cover toolbar and palette actions, language changes, file selection,

@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         audioLab: fileURLToPath(new URL("./audio-lab/index.html", import.meta.url)),
+        uwbLab: fileURLToPath(new URL("./uwb-lab/index.html", import.meta.url)),
       },
     },
   },

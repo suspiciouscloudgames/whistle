@@ -46,6 +46,7 @@ type Props = {
   className?: string;
   feedback?: PlacementFeedback | null;
   clock?: () => Date;
+  trackedPosition?: { x: number; y: number; z: number } | null;
 };
 const deviceTime = () => new Date();
 function material(color: string) {
@@ -122,8 +123,11 @@ export default function Scene({
   className = "",
   feedback = null,
   clock = deviceTime,
+  trackedPosition = null,
 }: Props) {
   const { t } = useLanguage();
+  const trackedRef = useRef(trackedPosition);
+  trackedRef.current = trackedPosition;
   const audioCallback = useRef(onAudioFrame);
   audioCallback.current = onAudioFrame;
   const feedbackRef = useRef(feedback);
@@ -227,6 +231,21 @@ export default function Scene({
       camera.lookAt(0, 0, 0);
     }
     const toScene = (n: number) => n * 2 - world.size + 1;
+    let trackingMarker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | undefined;
+    const updateTrackingMarker = () => {
+      const position = trackedRef.current;
+      if (position && !trackingMarker) {
+        trackingMarker = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 12),
+          new THREE.MeshBasicMaterial({ color: "#e34d35", depthTest: false, fog: false, toneMapped: false }));
+        trackingMarker.name = "uwb-position";
+        trackingMarker.renderOrder = 100;
+        scene.add(trackingMarker);
+      }
+      if (trackingMarker) {
+        trackingMarker.visible = !!position;
+        if (position) trackingMarker.position.set(toScene(position.x), position.y + 0.5, toScene(position.z));
+      }
+    };
     const pulses = new THREE.Group();
     scene.add(pulses);
     let pulseId = 0,
@@ -507,6 +526,7 @@ export default function Scene({
       sun.position.set(currentDay.sunX, currentDay.sunY, currentDay.sunZ);
       moon.intensity = currentDay.moon;
       updateModels();
+      updateTrackingMarker();
       terrain.update(time, camera, mistColor);
       if (mode === "overview") {
         const reaction = feedbackRef.current;
