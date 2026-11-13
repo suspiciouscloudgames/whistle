@@ -37,6 +37,13 @@ export type PlayerSound = {
   grounded?: boolean; falling?: boolean; yaw?: number; water?: number;
 };
 
+export function validateBoardHeight(height: number) {
+  if (!Number.isFinite(height) || height < 0 || height > 10) {
+    throw new Error("보드 높이는 0~10m 사이의 유한한 숫자여야 합니다.");
+  }
+  return height;
+}
+
 const bounded = (value: number, min: number, max: number) => {
   if (!Number.isFinite(value)) throw new Error("오디오 파라미터는 유한한 숫자여야 합니다.");
   return Math.max(min, Math.min(max, value));
@@ -106,6 +113,7 @@ export async function createPdSession(
         ]);
       },
       stopPlayer() { send("whistle-player-stop", ["bang"]); },
+      boardHeight(height: number) { send("whistle-board-height", [validateBoardHeight(height)]); },
       event(frequency: number, gain: number, pan: number) {
         send("whistle-event", [bounded(frequency, 20, 20000), bounded(gain, 0, 0.12), bounded(pan, -1, 1)]);
       },

@@ -44,6 +44,13 @@ test("Pd receives position and materials without speed and uses a fixed level", 
     return l.rms > 0.01 && r.rms < 0.0001 && Math.abs(l.hz - 220) < 16;
   }).toBe(true);
 
+  for (const y of [7.5, 2.5]) {
+    await page.locator("#player-y").fill(String(y));
+    await send.click();
+    await expect.poll(async () => (await received(page))["whistle-player"]).toEqual([0, y, 0, 0, 0]);
+    await expect.poll(async () => Math.abs((await levels(page))[0].hz - 220)).toBeLessThan(16);
+  }
+
   await page.locator("#player-x").fill("1");
   await page.locator("#player-z").fill("0.5");
   await page.locator("#grass").fill("1");

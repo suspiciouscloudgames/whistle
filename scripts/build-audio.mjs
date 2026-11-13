@@ -30,7 +30,7 @@ const io = {
   inputs: ports(metadata.settings.io.messageReceivers),
   outputs: ports(metadata.settings.io.messageSenders),
 };
-for (const name of ["whistle-edit", "whistle-player", "whistle-gate", "whistle-event", "whistle-player-stop"]) {
+for (const name of ["whistle-edit", "whistle-player", "whistle-gate", "whistle-event", "whistle-player-stop", "whistle-board-height"]) {
   if (!io.inputs[name] || !io.outputs[name]) throw new Error(`Missing Pd bus: ${name}`);
 }
 if (!io.outputs["whistle-ready"]) throw new Error("Missing Pd ready signal");

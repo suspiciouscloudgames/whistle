@@ -96,5 +96,5 @@ export function useWorldPersistence({ world, onLoad, onImport, notify }: Options
     }
   }, [notify, onImport, resumeAutosave]);
 
-  return { saveStatus, resumeAutosave, importFile };
+  return { ready, saveStatus, resumeAutosave, importFile };
 }

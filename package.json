@@ -21,7 +21,7 @@
     "pretest:browser": "npm run audio:build",
     "prebuild": "npm run audio:build",
     "predev": "npm run audio:build",
-    "test:uwb": "npm run audio:build && node --experimental-strip-types --test tests/uwb-position.test.ts && playwright test tests/browser/uwb.spec.ts"
+    "test:uwb": "npm run audio:build && node --experimental-strip-types --test tests/uwb-position.test.ts && playwright test tests/browser/uwb.spec.ts tests/browser/uwb-live.spec.ts"
   },
   "dependencies": {
     "react": "19.2.6",

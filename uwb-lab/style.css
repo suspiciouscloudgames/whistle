@@ -13,6 +13,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 label { display: inline-flex; flex-direction: column; gap: 4px; margin: 6px 12px 8px 0; font-size: 14px; }
 input[type=number] { width: 120px; padding: 6px; border: 1px solid #a4aaa4; border-radius: 4px; }
 .world-controls { border-bottom: 1px solid #d0d5cb; padding-bottom: 16px; }
+.live-controls { padding: 12px; margin-bottom: 16px; border: 1px solid #a7bca7; border-radius: 8px; background: #edf3e8; }
+.live-controls button:first-child { background: #294d3d; color: white; border-color: #294d3d; }
 .layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(320px, 1fr); gap: 28px; margin-top: 20px; }
 .scene { position: relative; height: 390px; overflow: hidden; border: 1px solid #c4c9bf; border-radius: 10px; }
 .scene canvas { display: block; width: 100%; height: 100%; }

@@ -22,6 +22,7 @@ import { useWorldDocument } from "@/components/whistle/useWorldDocument";
 import { useGameAudio } from "@/components/whistle/useGameAudio";
 import { editSound } from "@/lib/audio/game-parameters";
 import { useWorldPersistence } from "@/components/whistle/useWorldPersistence";
+import { useLiveWorldPublisher } from "@/components/whistle/useLiveWorldPublisher";
 import { WeatherControls } from "@/components/whistle/WeatherControls";
 import { EditorToolbar } from "@/components/whistle/EditorToolbar";
 import { EditorPalette } from "@/components/whistle/EditorPalette";
@@ -127,9 +128,10 @@ export default function Home() {
     setSelectedAsset(imported.assets[0].id);
     setSelected(null);
   }, [updateWorld]);
-  const { saveStatus, resumeAutosave, importFile: loadFile } = useWorldPersistence({
+  const { ready, saveStatus, resumeAutosave, importFile: loadFile } = useWorldPersistence({
     world, onLoad: handleLoad, onImport: handleImport, notify,
   });
+  useLiveWorldPublisher(world, ready);
   const reset = useCallback((w: World = getWorld()) => {
     resetSimulation(w);
   }, [getWorld, resetSimulation]);

@@ -6,6 +6,14 @@ import { createWorldDeriver } from "../lib/world-derivation.ts";
 import { starterWorld } from "../lib/world.ts";
 import { flatTerrain } from "../lib/terrain.ts";
 import type { PdSession, PlayerSound } from "../lib/audio/webpd-session.ts";
+import { validateBoardHeight } from "../lib/audio/webpd-session.ts";
+
+test("board height accepts metres within the test range and rejects invalid measurements", () => {
+  for (const height of [0, 0.1, 1.5, 10]) assert.equal(validateBoardHeight(height), height);
+  for (const height of [-0.1, 10.01, NaN, Infinity, -Infinity]) {
+    assert.throws(() => validateBoardHeight(height), /보드 높이/);
+  }
+});
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function session() {

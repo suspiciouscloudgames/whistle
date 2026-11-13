@@ -71,6 +71,12 @@
 #X obj 820 180 s whistle-player-stop;
 #X obj 820 210 r whistle-player-stop;
 #X msg 820 240 0;
+#X obj 820 300 s whistle-board-height;
+#X obj 820 330 r whistle-board-height;
+#X obj 820 360 clip 0 10;
+#X obj 820 390 * 110;
+#X obj 820 420 t b f;
+#X obj 430 235 + 0;
 #X connect 3 0 4 0;
 #X connect 4 1 5 0;
 #X connect 5 2 6 0;
@@ -92,7 +98,13 @@
 #X connect 18 0 21 1;
 #X connect 21 0 22 0;
 #X connect 17 0 22 1;
-#X connect 22 0 23 0;
+#X connect 22 0 77 0;
+#X connect 77 0 23 0;
+#X connect 73 0 74 0;
+#X connect 74 0 75 0;
+#X connect 75 0 76 0;
+#X connect 76 1 77 1;
+#X connect 76 0 77 0;
 #X connect 24 0 25 0;
 #X connect 23 0 26 0;
 #X connect 25 0 26 1;

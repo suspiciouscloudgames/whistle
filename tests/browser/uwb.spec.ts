@@ -98,3 +98,77 @@ test("audio loading failure can retry and cancellation does not start a late ses
   await page.getByRole("button", { name: "오디오 시작", exact: true }).click();
   await expect(page.locator("#audio-status")).toHaveText("오디오 실행 중");
 });
+
+test("board height changes Pd output independently of virtual ground and survives restart", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.route("**/audio-test/webpd-runtime.js", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: await response.text() + `
+      const originalRun = WebPdRuntime.run;
+      WebPdRuntime.run = async (...args) => {
+        const node = await originalRun(...args);
+        const context = args[0];
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 4096;
+        analyser.smoothingTimeConstant = 0;
+        node.connect(analyser);
+        window.heightProbe = () => {
+          const wave = new Float32Array(4096);
+          const spectrum = new Float32Array(2048);
+          analyser.getFloatTimeDomainData(wave);
+          analyser.getFloatFrequencyData(spectrum);
+          let peak = 0;
+          for (let i = 1; i < spectrum.length; i++) if (spectrum[i] > spectrum[peak]) peak = i;
+          return { rms: Math.sqrt(wave.reduce((sum, n) => sum + n * n, 0) / wave.length),
+            hz: peak * context.sampleRate / analyser.fftSize };
+        };
+        return node;
+      };
+    ` });
+  });
+  const probe = () => page.evaluate(() => (window as typeof window & {
+    heightProbe: () => { rms: number; hz: number };
+  }).heightProbe());
+  const initial = await data(page);
+  const baseHz = 220 + 220 * initial.pd.z + 220 * initial.pd.grass + 440 * initial.pd.rough;
+  const height = page.getByLabel("보드 높이 (m)", { exact: true });
+  await page.getByRole("button", { name: "오디오 시작", exact: true }).click();
+  await expect(page.locator("#audio-status")).toHaveText("오디오 실행 중");
+  for (const metres of [0, 2, 10, 0]) {
+    await height.fill(String(metres));
+    await expect.poll(async () => (await messages(page))["whistle-board-height"]).toEqual([metres]);
+    await expect.poll(async () => Math.abs((await probe()).hz - (baseHz + 110 * metres))).toBeLessThan(16);
+    expect((await probe()).rms).toBeGreaterThan(0.001);
+    expect((await data(page)).grid).toEqual(initial.grid);
+    expect((await data(page)).pd).toEqual(initial.pd);
+    expect((await messages(page))["whistle-player"]).toHaveLength(9);
+    expect((await messages(page))["whistle-player"][1]).toBe(initial.pd.y);
+  }
+  for (const invalid of ["", "-1", "11"]) {
+    await height.fill(invalid);
+    await expect(page.locator("#height-status")).toContainText("오디오 정지");
+    await expect.poll(async () => (await messages(page))["whistle-gate"]).toEqual([0]);
+    await expect.poll(async () => (await probe()).rms).toBeLessThan(0.0001);
+  }
+  await page.getByLabel("좌표 JSON", { exact: true }).fill('{"x":1,"z":3,"boardHeight":1.5}');
+  await page.getByRole("button", { name: "좌표 적용", exact: true }).click();
+  await expect.poll(async () => (await messages(page))["whistle-board-height"]).toEqual([1.5]);
+  await expect.poll(async () => Math.abs((await probe()).hz - (baseHz + 165))).toBeLessThan(16);
+  await page.getByRole("button", { name: "오디오 종료", exact: true }).click();
+  await page.getByRole("button", { name: "오디오 시작", exact: true }).click();
+  await expect.poll(async () => (await messages(page))["whistle-board-height"]).toEqual([1.5]);
+  await expect.poll(async () => Math.abs((await probe()).hz - (baseHz + 165))).toBeLessThan(16);
+  await page.getByLabel("좌표 JSON", { exact: true }).fill('{"x":3,"z":3}');
+  await page.getByRole("button", { name: "좌표 적용", exact: true }).click();
+  await expect(height).toHaveValue("1.5");
+  await page.getByRole("button", { name: "왼쪽 위치", exact: true }).click();
+  await expect(height).toHaveValue("1.5");
+  for (const invalid of ['"2"', '-1', '1e999', 'null']) {
+    await page.getByLabel("좌표 JSON", { exact: true }).fill(`{"x":5,"z":2,"boardHeight":${invalid}}`);
+    await page.getByRole("button", { name: "좌표 적용", exact: true }).click();
+    await expect(page.locator("#tracking-status")).toContainText("보드 높이");
+    await expect.poll(async () => (await messages(page))["whistle-gate"]).toEqual([0]);
+    await expect(height).toHaveValue("1.5");
+    await expect(page.getByLabel("관객 X (m)", { exact: true })).toHaveValue("1");
+  }
+});
