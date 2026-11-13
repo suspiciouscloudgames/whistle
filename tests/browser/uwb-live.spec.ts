@@ -14,10 +14,14 @@ async function openLive(page: Page, context: BrowserContext, stored: string) {
   });
   await page.goto("uwb-lab/index.html");
   await page.evaluate((stored) => localStorage.setItem("whistle.world.v2", stored), stored);
-  const opening = page.waitForEvent("popup");
-  await page.getByRole("button", { name: "실시간 편집기 열기", exact: true }).click();
-  const editor = await opening;
+  const editor = await context.newPage();
+  await editor.goto(".");
   await expect(editor.locator(".workspace")).toBeVisible();
+  await page.bringToFront();
+  const tabs = context.pages().length;
+  await page.getByRole("button", { name: "Whistle 3D", exact: true }).click();
+  expect(context.pages()).toHaveLength(tabs);
+  await expect(page.getByRole("button", { name: "Whistle 3D", exact: true })).toHaveAttribute("aria-pressed", "true");
   return editor;
 }
 
@@ -88,7 +92,9 @@ test("world replacement and reload stay connected; disconnect isolates later edi
   await expect(page.getByRole("heading", { name: next.title, exact: true })).toBeVisible();
   await page.bringToFront();
   await page.getByRole("button", { name: "샘플 세계", exact: true }).click();
-  await expect(page.locator("#live-status")).toHaveText("샘플 / 저장본 테스트");
+  await expect(page.locator("#live-status")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "샘플 세계", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#audio-status")).toHaveText("오디오 꺼짐");
   await editor.bringToFront();
   await editor.getByRole("button", { name: "높이기", exact: true }).click();
   await editor.locator('[data-cell="0"]').click();
@@ -100,7 +106,7 @@ test("world replacement and reload stay connected; disconnect isolates later edi
 
 test("a failed editor load cannot replace the test world or enable live audio", async ({ page, context }) => {
   const editor = await openLive(page, context, "{broken-json");
-  await expect(page.locator("#live-status")).toContainText("불러오지 못함");
+  await expect(page.locator("#live-status")).toContainText("불러오지 못");
   await expect(page.getByRole("button", { name: "오디오 시작", exact: true })).toBeDisabled();
   await expect(page.getByTestId("position-marker")).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem("whistle.world.v2"))).toBe("{broken-json");
@@ -108,6 +114,24 @@ test("a failed editor load cannot replace the test world or enable live audio", 
   world.title = "복구된 세계";
   await editor.locator('input[type="file"]').setInputFiles({ name: "world.json", mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(world)) });
+  await expect(page.locator("#live-status")).toHaveText("편집 중인 세계에 연결됨");
+  await expect(page.getByRole("heading", { name: world.title, exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "오디오 시작", exact: true })).toBeEnabled();
+  await editor.close();
+});
+
+test("Whistle 3D waits without a saved world and connects when an editor opens later", async ({ page, context }) => {
+  await context.addInitScript(() => Object.defineProperty(window, "devicePixelRatio", { value: 0.5 }));
+  await page.goto("uwb-lab/index.html");
+  await page.getByRole("button", { name: "Whistle 3D", exact: true }).click();
+  await expect(page.locator("#live-status")).toHaveText("Whistle 편집기를 열어 주세요.");
+  await expect(page.getByRole("button", { name: "오디오 시작", exact: true })).toBeDisabled();
+  expect(context.pages()).toHaveLength(1);
+  const world = terrainFixtures().flat;
+  world.title = "나중에 연 편집기";
+  await page.evaluate((world) => localStorage.setItem("whistle.world.v2", JSON.stringify(world)), world);
+  const editor = await context.newPage();
+  await editor.goto(".");
   await expect(page.locator("#live-status")).toHaveText("편집 중인 세계에 연결됨");
   await expect(page.getByRole("heading", { name: world.title, exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "오디오 시작", exact: true })).toBeEnabled();

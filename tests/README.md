@@ -19,13 +19,13 @@ stopping, blur/return, existing sound rules and recovery from audio load failure
 Browser tests use isolated browser storage and start their own local Vite server
 on port 5189. Leave that port free. Failure traces are saved in `output/playwright/`.
 UWB tests cover simulated positions, calibration, terrain sampling, Pd messages,
-invalid input, audio cancellation and read-only world imports. They set the browser's
+invalid input, audio cancellation and the sample/Whistle 3D menu, no-popup world loading and unchanged saved worlds. They set the browser's
 device pixel ratio to 0.5 to limit software WebGL rasterization cost; the real scene
 and Pd patch still run. Application rendering settings are unchanged.
 Board height tests verify its separate Pd bus and actual output frequency, unchanged
 ground/player parameters, invalid-input muting, JSON compatibility and audio restart.
 Live terrain height edits also verify that the physical board height stays independent.
-Live UWB tests open the real editor in a second tab and paint its grid, then verify
+Live UWB tests separately open the normal editor without a session URL and paint its grid, then verify
 the updated terrain and Pd values in the test page. They cover undo/redo, height,
 imports with a different grid size, reload, disconnect and recovery from invalid
 saved data. One test forces autosave failures to verify in-memory synchronization.

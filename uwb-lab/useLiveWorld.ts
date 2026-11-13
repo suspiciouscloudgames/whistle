@@ -1,97 +1,96 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { validateWorld, type World } from "../lib/world";
-import { LIVE_WORLD_QUERY, liveWorldChannel } from "../lib/live-world";
+import { upgradeTerrain } from "../lib/terrain";
+import { LIVE_WORLD_CHANNEL } from "../lib/live-world";
 
-type Status = "off" | "waiting" | "connected" | "disconnected" | "unavailable";
+type Status = "off" | "saved" | "waiting" | "connected" | "disconnected" | "unavailable";
 
 export function useLiveWorld(receive: (world: World) => void) {
-  const [session, setSession] = useState<string | null>(null);
+  const [active, setActive] = useState(false);
   const [status, setStatus] = useState<Status>("off");
   const [error, setError] = useState("");
-  const [updates, setUpdates] = useState(0);
-  const editor = useRef<Window | null>(null);
   const receiveRef = useRef(receive);
   receiveRef.current = receive;
 
   const disconnect = useCallback(() => {
-    setSession(null);
+    setActive(false);
     setStatus("off");
     setError("");
-    editor.current = null;
   }, []);
-
-  function openEditor() {
-    if (session && editor.current && !editor.current.closed) {
-      editor.current.focus();
-      return;
-    }
-    if (typeof BroadcastChannel === "undefined") {
-      setError("이 브라우저에서는 실시간 연결을 지원하지 않습니다.");
-      return;
-    }
-    const id = crypto.randomUUID();
-    const url = new URL(import.meta.env.BASE_URL, location.origin);
-    url.searchParams.set(LIVE_WORLD_QUERY, id);
-    const opened = window.open(url.href, `whistle-editor-${id}`);
-    if (!opened) {
-      setError("편집기 창을 열지 못했습니다. 팝업 허용 후 다시 눌러 주세요.");
-      return;
-    }
-    editor.current = opened;
-    setError("");
-    setUpdates(0);
-    setStatus("waiting");
-    setSession(id);
-  }
+  const connect = useCallback(() => setActive(true), []);
 
   useEffect(() => {
-    if (!session) return;
-    const channel = new BroadcastChannel(liveWorldChannel(session)!);
-    let receivedWorld = false;
+    if (!active) return;
+    let source: string | null = null;
     let lastSeen = performance.now();
-    const invalidate = (next: Status) => {
-      receivedWorld = false;
-      setStatus(next);
+    const loadSaved = () => {
+      try {
+        const stored = localStorage.getItem("whistle.world.v2");
+        if (stored === null) {
+          setStatus("waiting");
+        } else {
+          receiveRef.current(upgradeTerrain(validateWorld(JSON.parse(stored))));
+          setStatus("saved");
+        }
+        setError("");
+      } catch {
+        setStatus("unavailable");
+        setError("Whistle 세계를 불러오지 못했습니다.");
+      }
     };
-    channel.onmessage = ({ data }) => {
-      if (data?.type === "world") {
+    loadSaved();
+    const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(LIVE_WORLD_CHANNEL);
+    if (channel) channel.onmessage = ({ data }) => {
+      if (typeof data?.source !== "string") return;
+      if (data.type === "world") {
         try {
           const world = validateWorld(data.world);
           receiveRef.current(world);
-          receivedWorld = true;
+          source = data.source;
           lastSeen = performance.now();
           setStatus("connected");
           setError("");
-          setUpdates((value) => value + 1);
         } catch {
-          invalidate("unavailable");
-          setError("편집기에서 받은 세계가 올바르지 않습니다.");
+          if (!source || source === data.source) {
+            setStatus("unavailable");
+            setError("편집기에서 받은 세계가 올바르지 않습니다.");
+          }
         }
-      } else if (data?.type === "alive") {
-        lastSeen = performance.now();
-        if (!receivedWorld) channel.postMessage({ type: "request" });
-      } else if (data?.type === "unavailable") {
-        lastSeen = performance.now();
-        invalidate("unavailable");
-      } else if (data?.type === "closed") {
-        invalidate("disconnected");
+      } else if (!source || source === data.source) {
+        if (data.type === "alive") {
+          lastSeen = performance.now();
+        } else if (data.type === "unavailable") {
+          setStatus("unavailable");
+        } else if (data.type === "closed" && source === data.source) {
+          source = null;
+          setStatus("disconnected");
+        }
       }
     };
     const request = () => {
-      if (editor.current?.closed || performance.now() - lastSeen > 5000) invalidate("disconnected");
-      channel.postMessage({ type: receivedWorld ? "ping" : "request" });
+      if (source && performance.now() - lastSeen > 5000) {
+        source = null;
+        setStatus("disconnected");
+      }
+      channel?.postMessage(source ? { type: "ping", target: source } : { type: "request" });
     };
     request();
     const timer = setInterval(request, 1000);
-    const visible = () => { if (!document.hidden) channel.postMessage({ type: "request" }); };
+    const visible = () => {
+      if (!document.hidden) channel?.postMessage({ type: "request" });
+    };
+    const saved = (event: StorageEvent) => {
+      if (!source && (event.key === "whistle.world.v2" || event.key === null)) loadSaved();
+    };
+    window.addEventListener("storage", saved);
     document.addEventListener("visibilitychange", visible);
     return () => {
       clearInterval(timer);
+      window.removeEventListener("storage", saved);
       document.removeEventListener("visibilitychange", visible);
-      channel.onmessage = null;
-      channel.close();
+      channel?.close();
     };
-  }, [session]);
+  }, [active]);
 
-  return { active: session !== null, status, error, updates, openEditor, disconnect };
+  return { active, status, error, connect, disconnect };
 }

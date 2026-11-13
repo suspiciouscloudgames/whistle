@@ -59,25 +59,27 @@ test("Pd receives mapped values and stops for invalid input and blur", async ({ 
   await expect(page.locator("#audio-status")).toHaveText("오디오 꺼짐");
 });
 
-test("saved and imported worlds are read without overwriting game storage", async ({ page }) => {
+test("two world menus show the existing world without a popup or overwriting storage", async ({ page, context }) => {
   const world = createLabWorld();
   world.title = "저장된 테스트 세계";
-  world.terrain!.tiles[6 * world.size + 6].hole = true;
   const stored = JSON.stringify(world);
   await page.evaluate((stored) => localStorage.setItem("whistle.world.v2", stored), stored);
-  await page.getByRole("button", { name: "저장된 세계 읽기", exact: true }).click();
-  await expect(page.getByRole("heading", { name: world.title })).toBeVisible();
-  await page.getByLabel("관객 X (m)", { exact: true }).fill("3.25");
-  await page.getByLabel("관객 Z (m)", { exact: true }).fill("3.25");
-  await expect(page.locator("#tracking-status")).toContainText("바닥 없음");
-  await expect(page.getByRole("button", { name: "오디오 시작", exact: true })).toBeDisabled();
-  const input = page.getByLabel("세계 JSON 파일", { exact: true });
-  await input.setInputFiles({ name: "bad.json", mimeType: "application/json", buffer: Buffer.from("{}") });
-  await expect(page.getByRole("heading", { name: world.title })).toBeVisible();
-  const imported = { ...world, title: "파일 세계" };
-  await input.setInputFiles({ name: "world.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(imported)) });
-  await expect(page.getByRole("heading", { name: "파일 세계" })).toBeVisible();
-  await page.getByRole("button", { name: "샘플 세계", exact: true }).click();
+  const menu = page.getByRole("navigation", { name: "테스트 세계" });
+  await expect(menu.getByRole("button")).toHaveCount(2);
+  await expect(menu.getByRole("button", { name: "샘플 세계", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(menu.getByRole("button", { name: "Whistle 3D", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "저장된 세계 읽기", exact: true })).toHaveCount(0);
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
+  const tabs = context.pages().length;
+  await menu.getByRole("button", { name: "Whistle 3D", exact: true }).click();
+  await expect(page.getByRole("heading", { name: world.title, exact: true })).toBeVisible();
+  expect(context.pages()).toHaveLength(tabs);
+  await expect(menu.getByRole("button", { name: "Whistle 3D", exact: true })).toHaveAttribute("aria-pressed", "true");
+  const audio = await page.getByRole("button", { name: "오디오 시작", exact: true }).boundingBox();
+  const mapping = await page.getByRole("group", { name: "전시장 매핑", exact: true }).boundingBox();
+  expect(audio!.y + audio!.height).toBeLessThan(mapping!.y);
+  await menu.getByRole("button", { name: "샘플 세계", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "UWB 샘플 · 풀 / 바위 / 물", exact: true })).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem("whistle.world.v2"))).toBe(stored);
 });
 

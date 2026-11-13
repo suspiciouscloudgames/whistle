@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Scene from "../components/whistle/Scene";
-import { createSimulation, validateWorld, type World } from "../lib/world";
-import { upgradeTerrain } from "../lib/terrain";
+import { createSimulation } from "../lib/world";
 import { createWorldDeriver } from "../lib/world-derivation";
 import { createPdSession, validateBoardHeight, type PdSession } from "../lib/audio/webpd-session";
 import { roomPositionAt, sampleTrackedPosition, type RoomMapping } from "../lib/uwb-position";
@@ -21,19 +20,12 @@ export default function Lab() {
   const [boardHeight, setBoardHeight] = useState(0);
   const [packet, setPacket] = useState('{"x":1,"z":3,"boardHeight":0}');
   const [inputError, setInputError] = useState("");
-  const [notice, setNotice] = useState("");
   const [audioState, setAudioState] = useState<"off" | "loading" | "on">("off");
   const [audioError, setAudioError] = useState("");
   const [received, setReceived] = useState<Record<string, (string | number)[]>>({});
   const session = useRef<PdSession | null>(null);
   const generation = useRef(0);
-  const importGeneration = useRef(0);
-  const receiveWorld = useCallback((next: World) => {
-    importGeneration.current++;
-    setWorld(next);
-    setNotice(`편집 중인 세계: ${next.title}`);
-  }, []);
-  const live = useLiveWorld(receiveWorld);
+  const live = useLiveWorld(setWorld);
   const liveActive = useRef(live.active);
   liveActive.current = live.active;
   const derive = useMemo(createWorldDeriver, []);
@@ -41,7 +33,7 @@ export default function Lab() {
   const simulation = useMemo(() => createSimulation(world), [world]);
   const sample = useMemo(() => {
     try {
-      if (live.active && live.status !== "connected") throw new Error("편집기 연결 대기 · 위치 적용 중지");
+      if (live.active && live.status !== "connected" && live.status !== "saved") throw new Error("편집기 연결 대기 · 위치 적용 중지");
       if (inputError) throw new Error(inputError);
       return { value: sampleTrackedPosition(world, derivation, position, mapping), error: "" };
     } catch (error) {
@@ -88,7 +80,6 @@ export default function Lab() {
       window.removeEventListener("pagehide", stopAudio);
       document.removeEventListener("visibilitychange", hidden);
       generation.current++;
-      importGeneration.current++;
       void session.current?.close();
       session.current = null;
     };
@@ -113,33 +104,11 @@ export default function Lab() {
     }
   }
 
-  function replaceWorld(next: World) {
+  function selectSample() {
     live.disconnect();
     stopAudio();
     setReceived({});
-    setWorld(next);
-    setNotice(`불러옴: ${next.title}`);
-  }
-
-  function loadSaved() {
-    importGeneration.current++;
-    try {
-      const saved = localStorage.getItem("whistle.world.v2");
-      if (!saved) throw new Error("이 주소에 저장된 세계가 없습니다. 게임에서 내보낸 JSON 파일을 열어 주세요.");
-      replaceWorld(upgradeTerrain(validateWorld(JSON.parse(saved))));
-    } catch (error) { setNotice(error instanceof Error ? error.message : "불러오기 실패"); }
-  }
-
-  async function loadFile(file?: File) {
-    if (!file) return;
-    const request = ++importGeneration.current;
-    try {
-      if (file.size > 6_000_000) throw new Error("6MB 이하의 세계 파일을 선택해 주세요.");
-      const next = upgradeTerrain(validateWorld(JSON.parse(await file.text())));
-      if (request === importGeneration.current) replaceWorld(next);
-    } catch (error) {
-      if (request === importGeneration.current) setNotice(error instanceof Error ? error.message : "불러오기 실패");
-    }
+    setWorld(createLabWorld());
   }
 
   function moveTo(u: number, v: number) {
@@ -154,30 +123,20 @@ export default function Lab() {
     grid: sample.value.grid, pd: sample.value.sound } : { error: sample.error };
 
   return <main>
-    <header><a href={import.meta.env.BASE_URL}>Whistle</a><h1>UWB 위치 테스트</h1>
-      <p>장비 없이 관객 1명의 위치를 움직여 가상공간과 소리의 연결을 확인합니다. 빨간 표식이 관객 위치입니다.</p></header>
+    <header><h1>UWB 위치 테스트</h1></header>
     <section className="world-controls" aria-label="세계 선택">
-      <div className="live-controls">
-        <button onClick={() => {
-          importGeneration.current++;
+      <nav className="world-menu" aria-label="테스트 세계">
+        <button aria-pressed={!live.active} onClick={selectSample}>샘플 세계</button>
+        <button aria-pressed={live.active} onClick={() => {
           if (!live.active) stopAudio();
-          live.openEditor();
-        }}>실시간 편집기 열기</button>
-        <button disabled={!live.active} onClick={() => { live.disconnect(); stopAudio(); }}>실시간 연결 해제</button>
-        <p id="live-status" role="status">{live.error || ({ off: "샘플 / 저장본 테스트", waiting: "편집기 연결 대기",
-          connected: "편집 중인 세계에 연결됨", disconnected: "편집기 연결 끊김 · 오디오 정지", unavailable: "편집기 세계를 불러오지 못함 · 오디오 정지" })[live.status]}</p>
-        {live.active ? <p>편집기에서 격자를 바꾸면 이 공간도 함께 바뀝니다. 좌표는 유지됩니다. 문서 갱신: <output id="live-updates">{live.updates}</output>회</p> : null}
-      </div>
-      <button onClick={() => { importGeneration.current++; replaceWorld(createLabWorld()); }}>샘플 세계</button>
-      <button onClick={loadSaved}>저장된 세계 읽기</button>
-      <label>세계 JSON 파일<input type="file" accept=".json,application/json" onChange={(event) => {
-        void loadFile(event.target.files?.[0]); event.target.value = "";
-      }} /></label>
-      <p>실시간 편집기는 새 탭에서 열립니다. 두 창을 나란히 두면 편집과 위치 테스트를 함께 볼 수 있습니다. 이 테스트 페이지는 세계를 읽기만 합니다.</p>
-      <p role="status">{notice}</p>
+          live.connect();
+        }}>Whistle 3D</button>
+      </nav>
     </section>
     <div className="layout">
       <section className="views" aria-label="가상공간">
+        {live.active ? <p id="live-status" role="status">{live.error || ({ off: "", saved: "Whistle 3D", waiting: "Whistle 편집기를 열어 주세요.",
+          connected: "편집 중인 세계에 연결됨", disconnected: "편집기 연결 끊김 · 오디오 정지", unavailable: "편집기 세계를 불러오지 못함 · 오디오 정지" })[live.status]}</p> : null}
         <h2>{world.title}</h2>
         <Scene world={world} simulation={simulation} derivation={derivation} mode="overview"
           trackedPosition={frame ? { x: frame.x, y: frame.y, z: frame.z } : null} />
@@ -206,6 +165,11 @@ export default function Lab() {
         <p>평면도 색상: 연두 = 부드러운 지면, 회색 = 거친 지면, 파랑 = 미끄러운 지면. 실제 풀·물 상태는 아래 계산값을 확인하세요.</p>
       </section>
       <section className="controls" aria-label="위치 입력">
+        <section className="audio-controls" aria-label="오디오">
+        <button onClick={() => void startAudio()} disabled={audioState !== "off" || !frame || !!heightError}>오디오 시작</button>
+        <button onClick={stopAudio} disabled={audioState === "off"}>오디오 종료</button>
+        <p id="audio-status" role="status">{audioError || ({ off: "오디오 꺼짐", loading: "패치 준비 중", on: "오디오 실행 중" })[audioState]}</p>
+        </section>
         <fieldset><legend>전시장 매핑</legend>
           {(Object.keys(labels) as (keyof RoomMapping)[]).map((key) => <label key={key}>{labels[key]}
             <input type="number" step="any" value={Number.isFinite(mapping[key]) ? mapping[key] : ""}
@@ -246,9 +210,6 @@ export default function Lab() {
         <dl><dt>풀</dt><dd id="grass">{frame?.grass.toFixed(3) ?? "—"}</dd>
           <dt>바위 지면</dt><dd id="rough">{frame?.rough.toFixed(3) ?? "—"}</dd>
           <dt>물</dt><dd id="water">{frame ? (frame.water ? "물속" : "마른 지면") : "—"}</dd></dl>
-        <button onClick={() => void startAudio()} disabled={audioState !== "off" || !frame || !!heightError}>오디오 시작</button>
-        <button onClick={stopAudio} disabled={audioState === "off"}>오디오 종료</button>
-        <p id="audio-status" role="status">{audioError || ({ off: "오디오 꺼짐", loading: "패치 준비 중", on: "오디오 실행 중" })[audioState]}</p>
         <p>Pd 시험음은 위치·풀·바위와 보드 높이에 따라 변합니다. 보드 높이 1m마다 음높이가 110Hz 올라가며, 0m는 기존 소리입니다. 물은 수신값만 확인합니다.
           {live.active ? " 실시간 연결 중에는 편집기로 이동해도 소리를 유지합니다. 오디오 종료 버튼으로 멈출 수 있습니다." : " 창을 벗어나면 종료됩니다."}</p>
         <details open><summary>변환 결과</summary><pre id="position-data">{JSON.stringify(readout, null, 2)}</pre></details>

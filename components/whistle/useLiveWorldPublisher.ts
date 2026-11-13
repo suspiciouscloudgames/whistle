@@ -1,24 +1,28 @@
 import { useEffect, useRef } from "react";
 import type { World } from "../../lib/world";
-import { LIVE_WORLD_QUERY, liveWorldChannel } from "../../lib/live-world";
+import { LIVE_WORLD_CHANNEL } from "../../lib/live-world";
 
 export function useLiveWorldPublisher(world: World, ready: boolean) {
   const current = useRef({ world, ready });
   current.current = { world, ready };
   const channel = useRef<BroadcastChannel | null>(null);
+  const source = useRef("");
 
   useEffect(() => {
-    const name = liveWorldChannel(new URLSearchParams(location.search).get(LIVE_WORLD_QUERY));
-    if (!name || typeof BroadcastChannel === "undefined") return;
-    const connection = new BroadcastChannel(name);
+    if (typeof BroadcastChannel === "undefined") return;
+    source.current = crypto.randomUUID();
+    const connection = new BroadcastChannel(LIVE_WORLD_CHANNEL);
     channel.current = connection;
+    const send = (type: string) => connection.postMessage({ type, source: source.current });
     const snapshot = () => connection.postMessage(current.current.ready
-      ? { type: "world", world: current.current.world } : { type: "unavailable" });
+      ? { type: "world", source: source.current, world: current.current.world }
+      : { type: "unavailable", source: source.current });
     connection.onmessage = ({ data }) => {
+      if (data?.target && data.target !== source.current) return;
       if (data?.type === "request") snapshot();
-      if (data?.type === "ping") connection.postMessage({ type: current.current.ready ? "alive" : "unavailable" });
+      if (data?.type === "ping") send(current.current.ready ? "alive" : "unavailable");
     };
-    const leaving = () => connection.postMessage({ type: "closed" });
+    const leaving = () => send("closed");
     window.addEventListener("pagehide", leaving);
     window.addEventListener("pageshow", snapshot);
     return () => {
@@ -31,6 +35,8 @@ export function useLiveWorldPublisher(world: World, ready: boolean) {
   }, []);
 
   useEffect(() => {
-    channel.current?.postMessage(ready ? { type: "world", world } : { type: "unavailable" });
+    channel.current?.postMessage(ready
+      ? { type: "world", source: source.current, world }
+      : { type: "unavailable", source: source.current });
   }, [world, ready]);
 }
