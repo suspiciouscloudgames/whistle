@@ -13,7 +13,7 @@ const output = join(root, "public/audio-test");
 const temporary = await mkdtemp(join(tmpdir(), "whistle-webpd-"));
 let wasm, runtime;
 try {
-  execFileSync(process.execPath, [join(webpd, "bin/cli.mjs"), "-i", join(root, "audio/patches/interaction-test.pd"), "-o", temporary, "-f", "app"], { stdio: "inherit" });
+  execFileSync(process.execPath, [join(webpd, "bin/cli.mjs"), "-i", join(root, "audio/patches/player3.pd"), "-o", temporary, "-f", "app"], { stdio: "inherit" });
   wasm = await readFile(join(temporary, "patch.wasm"));
   runtime = await readFile(join(temporary, "webpd-runtime.js"));
 } finally {
