@@ -227,7 +227,7 @@ export default function Lab() {
         <dl><dt>풀</dt><dd id="grass">{frame?.grass.toFixed(3) ?? "—"}</dd>
           <dt>바위 지면</dt><dd id="rough">{frame?.rough.toFixed(3) ?? "—"}</dd>
           <dt>물</dt><dd id="water">{frame ? (frame.water ? "물속" : "마른 지면") : "—"}</dd></dl>
-        <p>Pd 시험음은 위치·풀·바위와 보드 높이에 따라 변합니다. 보드 높이 1m마다 음높이가 110Hz 올라가며, 0m는 기존 소리입니다. 물은 수신값만 확인합니다.
+        <p>Pd 시험음은 풀 밀도에 따라 시계·사인파·바람 소리로 바뀝니다. 보드 높이와 물은 현재 수신값만 확인하며, 보드 높이는 소리를 바꾸지 않습니다.
           {live.active ? " 실시간 연결 중에는 편집기로 이동해도 소리를 유지합니다. 오디오 종료 버튼으로 멈출 수 있습니다." : " 창을 벗어나면 종료됩니다."}</p>
         <details open><summary>변환 결과</summary><pre id="position-data">{JSON.stringify(readout, null, 2)}</pre></details>
         <details><summary>Pd가 수신한 값</summary><pre id="pd-messages">{JSON.stringify(received, null, 2)}</pre></details>
