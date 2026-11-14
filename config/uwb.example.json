@@ -1,0 +1,13 @@
+{
+  "mode": "2d",
+  "fixedHeight": 1.2,
+  "maxResidual": 0.35,
+  "smoothingMs": 120,
+  "tags": ["0", "1", "2", "3"],
+  "anchors": [
+    { "id": "0", "x": 0, "z": 0, "boardHeight": 2.5 },
+    { "id": "1", "x": 6, "z": 0, "boardHeight": 2.5 },
+    { "id": "2", "x": 6, "z": 6, "boardHeight": 2.5 },
+    { "id": "3", "x": 0, "z": 6, "boardHeight": 0.5 }
+  ]
+}

@@ -11,7 +11,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "npm run test:unit && npm run test:browser",
-    "test:unit": "node --experimental-strip-types --test tests/engine.test.ts tests/environment.test.ts tests/symbols.test.ts tests/derivation.test.ts tests/game-audio.test.ts tests/uwb-position.test.ts",
+    "test:unit": "node --experimental-strip-types --test tests/engine.test.ts tests/environment.test.ts tests/symbols.test.ts tests/derivation.test.ts tests/game-audio.test.ts tests/uwb-position.test.ts tests/uwb-bridge.test.ts",
     "test:browser": "playwright test",
     "test:storage": "playwright test tests/browser/storage.spec.ts",
     "benchmark:editor": "node tests/performance/editor.mjs",
@@ -21,7 +21,9 @@
     "pretest:browser": "npm run audio:build",
     "prebuild": "npm run audio:build",
     "predev": "npm run audio:build",
-    "test:uwb": "npm run audio:build && node --experimental-strip-types --test tests/uwb-position.test.ts && playwright test tests/browser/uwb.spec.ts tests/browser/uwb-live.spec.ts"
+    "test:uwb": "npm run audio:build && node --experimental-strip-types --test tests/uwb-position.test.ts tests/uwb-bridge.test.ts && playwright test tests/browser/uwb.spec.ts tests/browser/uwb-live.spec.ts tests/browser/uwb-device.spec.ts",
+    "uwb:bridge": "node --experimental-strip-types scripts/uwb-bridge.ts",
+    "uwb:demo": "npm run uwb:bridge -- --simulate"
   },
   "dependencies": {
     "react": "19.2.6",
@@ -34,9 +36,12 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@types/three": "0.180.0",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "6.0.2",
+    "serialport": "^13.0.0",
     "typescript": "5.9.3",
     "vite": "8.0.13",
-    "webpd": "1.0.0-alpha.14"
+    "webpd": "1.0.0-alpha.14",
+    "ws": "^8.23.0"
   }
 }

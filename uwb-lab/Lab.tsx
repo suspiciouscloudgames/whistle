@@ -6,6 +6,8 @@ import { createPdSession, validateBoardHeight, type PdSession } from "../lib/aud
 import { roomPositionAt, sampleTrackedPosition, type RoomMapping } from "../lib/uwb-position";
 import { createLabWorld } from "./world";
 import { useLiveWorld } from "./useLiveWorld";
+import { useDevicePosition } from "./useDevicePosition";
+import DeviceControls from "./DeviceControls";
 
 const initialMapping: RoomMapping = { originX: 0, originZ: 0, width: 6, depth: 6, rotation: 0 };
 const labels: Record<keyof RoomMapping, string> = {
@@ -16,8 +18,13 @@ const statusLabels = { tracking: "위치 연결됨", outside: "공간 범위 밖
 export default function Lab() {
   const [world, setWorld] = useState(createLabWorld);
   const [mapping, setMapping] = useState(initialMapping);
-  const [position, setPosition] = useState({ x: 1, z: 3 });
-  const [boardHeight, setBoardHeight] = useState(0);
+  const [manualPosition, setPosition] = useState({ x: 1, z: 3 });
+  const [manualHeight, setBoardHeight] = useState(0);
+  const [inputMode, setInputMode] = useState<"manual" | "device">("manual");
+  const deviceMode = inputMode === "device";
+  const device = useDevicePosition(deviceMode);
+  const position = deviceMode ? device.position ?? manualPosition : manualPosition;
+  const boardHeight = deviceMode ? device.position?.boardHeight ?? 0 : manualHeight;
   const [packet, setPacket] = useState('{"x":1,"z":3,"boardHeight":0}');
   const [inputError, setInputError] = useState("");
   const [audioState, setAudioState] = useState<"off" | "loading" | "on">("off");
@@ -34,12 +41,13 @@ export default function Lab() {
   const sample = useMemo(() => {
     try {
       if (live.active && live.status !== "connected" && live.status !== "saved") throw new Error("편집기 연결 대기 · 위치 적용 중지");
-      if (inputError) throw new Error(inputError);
+      if (deviceMode && !device.position) throw new Error("장비 위치 대기 · 오디오 정지");
+      if (!deviceMode && inputError) throw new Error(inputError);
       return { value: sampleTrackedPosition(world, derivation, position, mapping), error: "" };
     } catch (error) {
       return { value: null, error: error instanceof Error ? error.message : "좌표 입력 오류" };
     }
-  }, [world, derivation, position, mapping, inputError, live.active, live.status]);
+  }, [world, derivation, position, mapping, inputError, live.active, live.status, deviceMode, device.position]);
   let heightError = "";
   try { validateBoardHeight(boardHeight); }
   catch (error) { heightError = (error as Error).message; }
@@ -112,14 +120,16 @@ export default function Lab() {
   }
 
   function moveTo(u: number, v: number) {
+    if (deviceMode) return;
     setInputError("");
     setPosition(roomPositionAt(u, v, mapping));
   }
   const frame = sample.value?.frame;
   const grid = sample.value?.grid;
   const mappingValid = Object.values(mapping).every(Number.isFinite) && mapping.width > 0 && mapping.depth > 0;
-  const readout = sample.value ? { status: sample.value.status, metres: position,
+  const readout = sample.value ? { status: sample.value.status, metres: { x: position.x, z: position.z },
     boardHeight: heightError ? null : boardHeight,
+    ...(deviceMode ? { device: device.position } : {}),
     grid: sample.value.grid, pd: sample.value.sound } : { error: sample.error };
 
   return <main>
@@ -140,8 +150,8 @@ export default function Lab() {
         <h2>{world.title}</h2>
         <Scene world={world} simulation={simulation} derivation={derivation} mode="overview"
           trackedPosition={frame ? { x: frame.x, y: frame.y, z: frame.z } : null} />
-        <p>평면도를 클릭하거나 드래그해 이동하세요. 왼쪽 위가 원점이고 오른쪽은 +X, 아래쪽은 +Z입니다.</p>
-        <button className="map" aria-label="관객 위치 평면도" disabled={!mappingValid}
+        <p>{deviceMode ? "PC 수신기의 좌표로 이동합니다." : "평면도를 클릭하거나 드래그해 이동하세요."} 왼쪽 위가 원점이고 오른쪽은 +X, 아래쪽은 +Z입니다.</p>
+        <button className="map" aria-label="관객 위치 평면도" disabled={!mappingValid || deviceMode}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
             const rect = event.currentTarget.getBoundingClientRect();
@@ -176,12 +186,19 @@ export default function Lab() {
               onChange={(event) => setMapping({ ...mapping, [key]: event.target.valueAsNumber })} /></label>)}
           <p>입력 좌표를 원점·회전으로 보정한 뒤 가로·세로에 맞춰 전체 격자에 매핑합니다.</p>
         </fieldset>
-        <fieldset><legend>가상 UWB 입력 · 미터</legend>
+        <fieldset><legend>위치 입력 방식</legend>
+          <label><input type="radio" name="input-mode" checked={!deviceMode} onChange={() => {
+            device.disconnect(); setInputMode("manual");
+          }} />가상 좌표 직접 입력</label>
+          <label><input type="radio" name="input-mode" checked={deviceMode} onChange={() => setInputMode("device")} />실제 데이터 · PC 수신기</label>
+        </fieldset>
+        {deviceMode ? <DeviceControls device={device} /> : null}
+        <fieldset disabled={deviceMode}><legend>가상 UWB 입력 · 미터</legend>
           {(["x", "z"] as const).map((axis) => <label key={axis}>관객 {axis.toUpperCase()} (m)
-            <input type="number" step="0.1" value={Number.isFinite(position[axis]) ? position[axis] : ""}
-              onChange={(event) => { setInputError(""); setPosition({ ...position, [axis]: event.target.valueAsNumber }); }} /></label>)}
+            <input type="number" step="0.1" value={Number.isFinite(manualPosition[axis]) ? manualPosition[axis] : ""}
+              onChange={(event) => { setInputError(""); setPosition({ ...manualPosition, [axis]: event.target.valueAsNumber }); }} /></label>)}
           <label>보드 높이 (m)
-            <input type="number" min="0" max="10" step="0.1" value={Number.isFinite(boardHeight) ? boardHeight : ""}
+            <input type="number" min="0" max="10" step="0.1" value={Number.isFinite(manualHeight) ? manualHeight : ""}
               onChange={(event) => { setInputError(""); setBoardHeight(event.target.valueAsNumber); }} /></label>
           <p>현실 바닥 기준 보드 높이입니다. 시험 범위는 0~10m이며, 3D 표식·지형·플레이어 높이는 바꾸지 않습니다.</p>
           <p id="height-status" role="status">{heightError ? `${heightError} · 오디오 정지` : ""}</p>
@@ -204,7 +221,7 @@ export default function Lab() {
             } catch (error) { setInputError(error instanceof SyntaxError ? "JSON에는 유한한 숫자 x, z가 필요합니다." : (error as Error).message); }
           }}>좌표 적용</button>
           <p>JSON의 boardHeight는 미터 단위이며, 생략하면 현재 보드 높이를 유지합니다.</p>
-          <p>위치 계산이 끝난 좌표를 시험 입력합니다. 실제 UWB 연결·거리 측정은 아직 포함하지 않습니다.</p>
+          <p>위치 계산이 끝난 좌표를 직접 시험 입력합니다.</p>
         </fieldset>
         <p id="tracking-status" role="status">{sample.error || (sample.value && statusLabels[sample.value.status])}</p>
         <dl><dt>풀</dt><dd id="grass">{frame?.grass.toFixed(3) ?? "—"}</dd>
