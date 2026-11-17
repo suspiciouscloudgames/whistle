@@ -8,6 +8,8 @@ import { PaintGrid } from "./PaintGrid";
 import { EnvironmentTile, environmentTileKind } from "./EnvironmentTile";
 import { ObjectArt } from "./Art";
 import { useLanguage } from "./Language";
+import type { Peer } from "@/lib/multiplayer/protocol";
+import type { CellFlash } from "./useMultiplayer";
 
 type Props = {
   world: World;
@@ -22,11 +24,16 @@ type Props = {
   onSelectObject: (id: string | null) => void;
   onUndo: () => void;
   onRedo: () => void;
+  participants?: Peer[];
+  flashes?: CellFlash[];
+  onCursor?: (cell: number | null) => void;
+  disabled?: boolean;
 };
 
 export function EditorBoard({
   world, actors, derivation, feedback, canHold, canUndo, canRedo,
   onPaint, onEnd, onSelectObject, onUndo, onRedo,
+  participants = [], flashes = [], onCursor, disabled,
 }: Props) {
   const { t } = useLanguage();
   const { structures, environment } = derivation;
@@ -48,6 +55,8 @@ export function EditorBoard({
       <div className="canvas-area">
         <PaintGrid
           size={world.size}
+          onCursor={onCursor}
+          disabled={disabled}
           occupied={(i) =>
             world.objects.some(
               (o) =>
@@ -147,6 +156,14 @@ export function EditorBoard({
                     className={`placement-reaction ${reaction.result ? "result-reaction" : "touch-reaction"} ${reaction.removed ? "removed-reaction" : ""}`}
                   />
                 )}
+                {flashes.filter(f => f.cells.includes(i)).map(f => <span key={f.id} className="peer-edit-flash" style={{ backgroundColor: f.color }} aria-hidden="true" />)}
+                {participants.filter(peer => peer.mode === "edit" && peer.active && peer.cursor === i).map((peer, index) => (
+                  <span key={peer.id} className="peer-cursor" data-peer-id={peer.id}
+                    style={{ backgroundColor: `${peer.color}35`, borderColor: peer.color, inset: index * 3 }}
+                    aria-label={`${t("접속자")} ${peer.number}`}>
+                    <b style={{ backgroundColor: peer.color }}>{peer.number}</b>
+                  </span>
+                ))}
               </>
             );
           }}

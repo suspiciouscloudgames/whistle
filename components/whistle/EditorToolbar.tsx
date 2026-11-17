@@ -11,10 +11,11 @@ type Props = {
   onNew: () => void;
   onImport: () => void;
   onShare: () => void;
+  shared?: boolean;
 };
 
 export function EditorToolbar({
-  playing, saveStatus, makeButton, onEnter, onExit, onNew, onImport, onShare,
+  playing, saveStatus, makeButton, onEnter, onExit, onNew, onImport, onShare, shared = false,
 }: Props) {
   const { language, setLanguage, t } = useLanguage();
   return (
@@ -61,8 +62,8 @@ export function EditorToolbar({
           </button>
         </div>
         <div className="file-actions">
-          <button onClick={onNew}>{t("다시 시작")}</button>
-          <button onClick={onImport}>
+          <button onClick={onNew} disabled={shared}>{t("다시 시작")}</button>
+          <button onClick={onImport} disabled={shared}>
             {t("불러오기")}
           </button>
           <button

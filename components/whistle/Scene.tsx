@@ -366,6 +366,12 @@ export default function Scene({
     const ro = new ResizeObserver(resize);
     ro.observe(el);
     resize();
+    const occupiedAt = (x: number, z: number) =>
+      terrain.environment.trees.some(tree => Math.hypot(tree.x - x, tree.z - z) < 0.18) ||
+      actors.current.some(a => !a.removed && symbolExperience.blocksMovement(a.id) &&
+        worldRef.current.assets.find(asset => asset.id === a.asset)?.solid &&
+        Math.hypot(x - a.x, z - a.z) < 0.43 * a.scale + 0.13);
+    let collisionWorld = worldRef.current;
     const blocked = (x: number, z: number) =>
       blocksTerrainStep(worldRef.current, player, {x, z}, structures) ||
       (jump
@@ -376,16 +382,7 @@ export default function Scene({
             floorHeight(worldRef.current, x, z, structures),
             Math.hypot(x - player.x, z - player.z),
           )) ||
-      terrain.environment.trees.some(
-        (tree) => Math.hypot(tree.x - x, tree.z - z) < 0.18,
-      ) ||
-      actors.current.some(
-        (a) =>
-          !a.removed &&
-          symbolExperience.blocksMovement(a.id) &&
-          worldRef.current.assets.find((s) => s.id === a.asset)?.solid &&
-          Math.hypot(x - a.x, z - a.z) < 0.43 * a.scale + 0.13,
-      );
+      occupiedAt(x, z);
     const keydown = (e: KeyboardEvent) => {
       if (
         mode !== "play" ||
@@ -507,6 +504,24 @@ export default function Scene({
       sun.position.set(currentDay.sunX, currentDay.sunY, currentDay.sunZ);
       moon.intensity = currentDay.moon;
       updateModels();
+      if (collisionWorld !== worldRef.current) {
+        collisionWorld = worldRef.current;
+        // A shared edit can put an obstacle around a stationary explorer.
+        // Preserve the view and relocate only if the current position is blocked.
+        if (mode === "play" && !falling && occupiedAt(player.x, player.z)) {
+          let safe: { x: number; z: number; floor: number; distance: number } | undefined;
+          for (let z = 0; z < world.size; z++) for (let x = 0; x < world.size; x++) {
+            const floor = floorHeight(worldRef.current, x, z, structures);
+            const distance = Math.hypot(x - player.x, z - player.z);
+            if (floor !== null && !occupiedAt(x, z) && (!safe || distance < safe.distance)) safe = { x, z, floor, distance };
+          }
+          if (safe) {
+            player.x = safe.x; player.z = safe.z; lastGround = safe.floor;
+            jump = null; jumpBuffer = 0; groundAge = 0; velocity = 0; stepRemaining = 0;
+            eyeY = playerEyeHeight(safe.floor, environmentAt(terrain.environment, safe.x, safe.z).water, EYE_HEIGHT);
+          }
+        }
+      }
       terrain.update(time, camera, mistColor);
       if (mode === "overview") {
         const reaction = feedbackRef.current;
@@ -740,7 +755,7 @@ export default function Scene({
               grass: underfoot.grass,
               rough: dry && ground !== null
                 ? (grounded ? roughness : terrainSample(worldRef.current, player.x, player.z).weights.rough) : 0,
-              water: dry ? 0 : 1, grounded: onGround, falling: falling !== null, yaw: player.yaw,
+              water: dry ? 0 : 1, grounded: onGround, falling: falling !== null, yaw: player.yaw, pitch, eyeY,
             });
             audioReport = time;
           }
@@ -798,7 +813,7 @@ export default function Scene({
       renderer.domElement.remove();
       models.current.clear();
     };
-  }, [world.size, world.sky, world.start.x, world.start.z, mode]);
+  }, [world.size, mode]);
   return (
     <div
       className={`scene ${className}`}

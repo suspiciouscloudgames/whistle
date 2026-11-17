@@ -118,3 +118,20 @@ test("a failed load can be retried by the next real interaction", async () => {
   assert.deepEqual(stub.edits, [{ ...sound, overlap: 1 }]);
   audio.dispose();
 });
+
+test("a room interaction patch can replace the own continuous tone while preserving local rule sounds", async () => {
+  const stub = session();
+  const audio = createGameAudio(async () => stub.value, error => assert.fail(String(error)));
+  audio.play(); await tick(); audio.movement(moving);
+  const count = stub.moves.length;
+  audio.setPlayerEnabled(false);
+  audio.movement({ ...moving, y: 3 });
+  audio.event(440, 0.1, 0);
+  assert.equal(stub.moves.length, count);
+  assert.equal(stub.events.length, 1);
+  audio.setPlayerEnabled(true);
+  assert.equal(stub.moves.at(-1)?.y, 3);
+  audio.pause(); audio.setPlayerEnabled(false); audio.setPlayerEnabled(true);
+  assert.equal(stub.moves.length, count + 1);
+  audio.dispose();
+});

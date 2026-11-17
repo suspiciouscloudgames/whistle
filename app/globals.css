@@ -2044,3 +2044,23 @@ p {
   .weather-mobile { display: flex; margin: 16px 0 12px; gap: 18px; }
   .weather-mobile button { width: 44px; height: 44px; padding: 10px; }
 }
+.multiplayer-bar[hidden] { display:none; }
+.multiplayer-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:10px 20px; border-bottom:1px solid #e7e7e7; font-size:11px; background:#fff; }
+.multiplayer-bar > button { border:1px solid #ddd; border-radius:5px; background:#fff; padding:6px 10px; cursor:pointer; }
+.multiplayer-bar > span, .room-note { color:#777; }
+.room-note { flex-basis:100%; font-size:10px; }
+.participants { display:flex; gap:10px; flex-wrap:wrap; }
+.participant { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+.participant i { width:10px; height:10px; border-radius:3px; }
+.participant small { color:#888; font-size:9px; }
+.peer-cursor { position:absolute; inset:0; border:2px solid; z-index:8; pointer-events:none; border-radius:2px; }
+.peer-cursor b { position:absolute; right:0; top:0; color:white; font:9px/12px system-ui; min-width:12px; padding:0 2px; text-align:center; }
+.peer-edit-flash { position:absolute; inset:0; z-index:7; pointer-events:none; opacity:0; animation:peer-flash .9s ease-out; }
+@keyframes peer-flash { from { opacity:.48; } to { opacity:0; } }
+.multiplayer-playing { position:fixed; z-index:40; top:8px; right:8px; max-width:min(620px,calc(100vw - 80px)); padding:8px 12px; border:1px solid #ddd; border-radius:6px; opacity:.94; }
+.multiplayer-playing .room-note { display:none; }
+.remote-volume { display:flex; align-items:center; gap:8px; }
+.local-sound-test { display:flex; align-items:center; gap:6px; cursor:pointer; }
+.local-sound-test input { margin:0; }
+.remote-volume input { width:90px; }
+@media (max-width:650px) { .multiplayer-bar { gap:8px; padding:8px 12px; } .multiplayer-playing { font-size:10px; } .multiplayer-playing .participants { gap:5px; } }

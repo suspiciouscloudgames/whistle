@@ -1,9 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { attachRooms } from "./server/rooms";
 export default defineConfig({
   base: "/whistle/",
-  plugins: [react()],
+  plugins: [react(), {
+    name: "whistle-rooms",
+    configureServer(server) { if (server.httpServer) attachRooms(server.httpServer); },
+    configurePreviewServer(server) { attachRooms(server.httpServer); },
+  }],
   resolve: { alias: { "@": fileURLToPath(new URL(".", import.meta.url)) } },
   build: {
     rolldownOptions: {

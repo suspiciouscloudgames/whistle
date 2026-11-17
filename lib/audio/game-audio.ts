@@ -5,6 +5,7 @@ export function createGameAudio(load: () => Promise<Session>, onError: (error: u
   let session: Session | undefined;
   let loading: Promise<void> | undefined;
   let disposed = false, paused = false, playing = false;
+  let playerEnabled = true;
   let pendingEdit: EditSound | undefined;
   let latestPlayer: PlayerSound | undefined;
   let pendingEvent: [number, number, number] | undefined;
@@ -15,7 +16,7 @@ export function createGameAudio(load: () => Promise<Session>, onError: (error: u
     if (!session || paused || disposed || (!playing && !pendingEdit)) return;
     session.mute(false);
     if (playing) {
-      if (latestPlayer) session.player(latestPlayer);
+      if (latestPlayer && playerEnabled) session.player(latestPlayer);
       if (pendingEvent) { session.event(...pendingEvent); pendingEvent = undefined; }
     }
     else if (pendingEdit) { session.edit(pendingEdit); pendingEdit = undefined; }
@@ -43,6 +44,13 @@ export function createGameAudio(load: () => Promise<Session>, onError: (error: u
     safely(() => { session?.stopPlayer(); session?.mute(true); });
   };
   return {
+    getContext: () => session?.context,
+    setPlayerEnabled(enabled: boolean) {
+      if (playerEnabled === enabled) return;
+      playerEnabled = enabled;
+      if (!enabled) safely(() => session?.stopPlayer());
+      else if (playing && !paused && !disposed && latestPlayer) safely(() => session?.player(latestPlayer!));
+    },
     edit(sound: EditSound) {
       if (disposed) return;
       playing = false;
@@ -55,7 +63,7 @@ export function createGameAudio(load: () => Promise<Session>, onError: (error: u
     movement(sound: PlayerSound) {
       if (!playing || paused || disposed) return;
       latestPlayer = sound;
-      safely(() => session?.player(sound));
+      if (playerEnabled) safely(() => session?.player(sound));
     },
     event(frequency: number, gain: number, pan: number) {
       if (!playing || paused || disposed) return;

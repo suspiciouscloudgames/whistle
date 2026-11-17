@@ -22,6 +22,10 @@ import { useWorldDocument } from "@/components/whistle/useWorldDocument";
 import { useGameAudio } from "@/components/whistle/useGameAudio";
 import { editSound } from "@/lib/audio/game-parameters";
 import { useWorldPersistence } from "@/components/whistle/useWorldPersistence";
+import { useMultiplayer } from "@/components/whistle/useMultiplayer";
+import { MultiplayerBar } from "@/components/whistle/MultiplayerBar";
+import { useLocalSoundTest } from "@/components/whistle/useLocalSoundTest";
+import { equal } from "@/lib/multiplayer/protocol";
 import { WeatherControls } from "@/components/whistle/WeatherControls";
 import { EditorToolbar } from "@/components/whistle/EditorToolbar";
 import { EditorPalette } from "@/components/whistle/EditorPalette";
@@ -91,7 +95,10 @@ export default function Home() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 4200);
   }, []);
-  const audio = useGameAudio(notify);
+  const localSoundTest = useLocalSoundTest();
+  const keepActive = localSoundTest.enabled && playing;
+  const audio = useGameAudio(notify, keepActive);
+  const sharedSubmit = useRef<((before: World, next: World) => boolean) | null>(null);
   const resetSimulation = useCallback((w: World) => {
     audio.reset();
     const next = createSimulation(w);
@@ -103,8 +110,33 @@ export default function Home() {
   const {
     world, getWorld, deriveWorld, feedback, canUndo, canRedo,
     commit: updateWorld, edit: change, load: loadDocument,
-    undo: undoDocument, redo: redoDocument, paint: paintDocument, endStroke,
-  } = useWorldDocument(initialWorld, resetSimulation);
+    undo: undoDocument, redo: redoDocument, paint: paintDocument, endStroke, receiveShared,
+  } = useWorldDocument(initialWorld, resetSimulation, sharedSubmit);
+  const multiplayer = useMultiplayer({
+    playing, keepActive, getWorld, notify, onPeers: audio.peers,
+    onWorld: (incoming, initial) => {
+      if (initial) {
+        audio.stop(); setPlaying(false); setSelected(null);
+        loadDocument(incoming, incoming);
+        return;
+      }
+      const before = getWorld();
+      receiveShared(incoming);
+      const previous = simulationRef.current;
+      const actors = incoming.objects.map(object => {
+        const actor = previous.actors.find(a => a.id === object.id);
+        if (actor && equal(before.objects.find(o => o.id === object.id), object)) return actor;
+        return { ...object, marks: actor?.marks ?? [], removed: false };
+      });
+      const next = { ...previous, actors, events: [] };
+      simulationRef.current = next; setSimulation(next);
+    },
+    onEditSound: (before, after, cells) => {
+      const sound = editSound(before, after, cells, deriveWorld(after));
+      if (sound) audio.edit(sound);
+    },
+  });
+  sharedSubmit.current = multiplayer.submit;
   const derivation = useMemo(
     () => deriveWorld(world, simulation.actors),
     [deriveWorld, world, simulation.actors],
@@ -127,16 +159,18 @@ export default function Home() {
     setSelectedAsset(imported.assets[0].id);
     setSelected(null);
   }, [updateWorld]);
-  const { saveStatus, resumeAutosave, importFile: loadFile } = useWorldPersistence({
-    world, onLoad: handleLoad, onImport: handleImport, notify,
+  const { saveStatus, resumeAutosave, importFile: loadFile, flush } = useWorldPersistence({
+    world, onLoad: handleLoad, onImport: handleImport, notify, enabled: !multiplayer.enabled,
   });
   const reset = useCallback((w: World = getWorld()) => {
     resetSimulation(w);
   }, [getWorld, resetSimulation]);
   const undo = () => {
+    if (multiplayer.enabled) { multiplayer.undo(); return; }
     if (undoDocument()) setSelected(null);
   };
   const redo = () => {
+    if (multiplayer.enabled) { multiplayer.redo(); return; }
     if (redoDocument()) setSelected(null);
   };
   const step = useCallback(() => {
@@ -241,6 +275,10 @@ export default function Home() {
       clickedCell(i % world.size, Math.floor(i / world.size));
       return;
     }
+    if (multiplayer.enabled) {
+      multiplayer.paint(cells, erase, { layer, surface, terrainTool, selectedAsset });
+      return;
+    }
     const before = getWorld();
     paintDocument(cells, erase, { layer, surface, terrainTool, selectedAsset });
     const after = getWorld();
@@ -249,7 +287,8 @@ export default function Home() {
       if (sound) audio.edit(sound);
     }
   };
-  const reroll = () =>
+  const reroll = () => {
+    if (multiplayer.enabled) { notify("전체 지형을 바꾸려면 방을 나가 주세요."); return; }
     change((w) => {
       w.terrain = generateTerrain(
         w.size,
@@ -260,6 +299,7 @@ export default function Home() {
         surface: "plain",
       };
     });
+  };
   const selectedObject = world.objects.find((o) => o.id === selected),
     chosenAsset = world.assets.find((a) => a.id === selectedObject?.asset);
   const patchObject = (patch: Partial<Placed>) =>
@@ -310,8 +350,9 @@ export default function Home() {
   return (
     <main className={`studio ${playing ? "playing" : ""}`}>
       <EditorToolbar
+        shared={multiplayer.enabled}
         playing={playing}
-        saveStatus={saveStatus}
+        saveStatus={multiplayer.enabled ? "함께 만드는 중" : saveStatus}
         makeButton={makeButton}
         onEnter={enter}
         onExit={exit}
@@ -319,6 +360,11 @@ export default function Home() {
         onImport={() => file.current?.click()}
         onShare={() => setShare(true)}
       />
+      <MultiplayerBar room={multiplayer.room} status={multiplayer.status} participants={multiplayer.participants}
+        soundPlayers={multiplayer.soundPlayers}
+        localSoundTest={localSoundTest}
+        self={multiplayer.self} playing={playing} onCreate={() => { flush(); multiplayer.create(); }}
+        onLeave={() => { audio.stop(); setPlaying(false); multiplayer.leave(); }} onVolume={audio.remoteVolume} />
       {playing && (
         <section className="play-shell">
           <Scene
@@ -328,7 +374,7 @@ export default function Home() {
             derivation={derivation}
             mode="play"
             onPlayer={(p) => (player.current = p)}
-            onAudioFrame={audio.movement}
+            onAudioFrame={(frame) => { audio.movement(frame); multiplayer.frame(frame); }}
             controls={controls}
             onControlsReset={() => setMovementMode("walk")}
           />
@@ -393,13 +439,17 @@ export default function Home() {
             derivation={derivation}
             feedback={feedback}
             canHold={layer === "symbols" && !placingStart}
-            canUndo={canUndo}
-            canRedo={canRedo}
+            canUndo={multiplayer.enabled ? multiplayer.status === "connected" && multiplayer.canUndo : canUndo}
+            canRedo={multiplayer.enabled ? multiplayer.status === "connected" && multiplayer.canRedo : canRedo}
             onPaint={paint}
-            onEnd={endStroke}
+            onEnd={() => { endStroke(); multiplayer.endStroke(); }}
             onSelectObject={setSelected}
             onUndo={undo}
             onRedo={redo}
+            participants={multiplayer.participants}
+            flashes={multiplayer.flashes}
+            onCursor={multiplayer.enabled ? multiplayer.cursor : undefined}
+            disabled={multiplayer.enabled && multiplayer.status !== "connected"}
           />
           <aside className="preview-panel" aria-label={t("배치 결과")}>
             <WeatherControls className="weather-mobile" value={world.weather}

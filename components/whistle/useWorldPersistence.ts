@@ -12,9 +12,10 @@ type Options = {
   onLoad: (world: World, beforeUpgrade: World) => void;
   onImport: (world: World) => void;
   notify: (message: string) => void;
+  enabled?: boolean;
 };
 
-export function useWorldPersistence({ world, onLoad, onImport, notify }: Options) {
+export function useWorldPersistence({ world, onLoad, onImport, notify, enabled = true }: Options) {
   const [ready, setReady] = useState(false);
   const [saveStatus, setSaveStatus] = useState("준비 중");
   const autosaveAllowed = useRef(false);
@@ -27,6 +28,7 @@ export function useWorldPersistence({ world, onLoad, onImport, notify }: Options
   }, []);
 
   useEffect(() => {
+    if (!enabled) { autosaveAllowed.current = false; setReady(false); return; }
     let active = true, generation = 0;
     const load = async (initial: boolean) => {
       const encoded = new URLSearchParams(location.hash.slice(1)).get("world");
@@ -66,10 +68,10 @@ export function useWorldPersistence({ world, onLoad, onImport, notify }: Options
       active = false;
       window.removeEventListener("hashchange", changed);
     };
-  }, [notify, onLoad, resumeAutosave]);
+  }, [notify, onLoad, resumeAutosave, enabled]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !enabled) return;
     setSaveStatus("저장 중");
     const timeout = setTimeout(() => {
       if (!autosaveAllowed.current) return;
@@ -81,7 +83,7 @@ export function useWorldPersistence({ world, onLoad, onImport, notify }: Options
       }
     }, 350);
     return () => clearTimeout(timeout);
-  }, [world, ready]);
+  }, [world, ready, enabled]);
 
   const importFile = useCallback(async (file?: File) => {
     if (!file) return;
@@ -96,5 +98,10 @@ export function useWorldPersistence({ world, onLoad, onImport, notify }: Options
     }
   }, [notify, onImport, resumeAutosave]);
 
-  return { saveStatus, resumeAutosave, importFile };
+  const flush = () => {
+    if (!enabled || !autosaveAllowed.current) return;
+    try { localStorage.setItem(STORAGE, JSON.stringify(world)); }
+    catch { notify("저장 공간이 부족해요. 세계를 파일로 보관해 주세요."); }
+  };
+  return { saveStatus, resumeAutosave, importFile, flush };
 }

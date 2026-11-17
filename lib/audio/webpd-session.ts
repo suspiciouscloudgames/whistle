@@ -14,6 +14,7 @@ declare global {
 }
 
 let runtimeLoading: Promise<void> | undefined;
+const initialized = new WeakMap<AudioContext, Promise<void>>();
 function loadRuntime(url: string) {
   return runtimeLoading ??= new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
@@ -36,6 +37,7 @@ export type PlayerSound = {
   x: number; y: number; z: number; grass: number; rough: number;
   grounded?: boolean; falling?: boolean; yaw?: number; water?: number;
 };
+export type InteractionSound = { players: number; proximity: number };
 
 const bounded = (value: number, min: number, max: number) => {
   if (!Number.isFinite(value)) throw new Error("오디오 파라미터는 유한한 숫자여야 합니다.");
@@ -45,8 +47,10 @@ const bounded = (value: number, min: number, max: number) => {
 export async function createPdSession(
   baseUrl: string,
   receive: (bus: string, message: PdMessage) => void,
+  options: { context?: AudioContext; destination?: AudioNode; runtimeUrl?: string } = {},
 ) {
-  const context = new AudioContext();
+  const context = options.context ?? new AudioContext();
+  const owned = !options.context;
   let node: PdNode | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -58,8 +62,13 @@ export async function createPdSession(
     const [patch, manifest]: [ArrayBuffer, Manifest] = await Promise.all([
       patchResponse.arrayBuffer(), ioResponse.json(),
     ]);
-    await loadRuntime(`${baseUrl}webpd-runtime.js`);
-    await window.WebPdRuntime.initialize(context);
+    await loadRuntime(options.runtimeUrl ?? `${baseUrl}webpd-runtime.js`);
+    let initialization = initialized.get(context);
+    if (!initialization) {
+      initialization = window.WebPdRuntime.initialize(context).catch(error => { initialized.delete(context); throw error; });
+      initialized.set(context, initialization);
+    }
+    await initialization;
     let markReady!: () => void;
     let failReady!: (error: Error) => void;
     const ready = new Promise<void>((resolve, reject) => {
@@ -80,7 +89,7 @@ export async function createPdSession(
       },
     });
     node.onprocessorerror = () => failReady(new Error("Pd 오디오 프로세서 오류"));
-    node.connect(context.destination);
+    node.connect(options.destination ?? context.destination);
     await ready;
     clearTimeout(timer);
     let closed = false;
@@ -106,6 +115,9 @@ export async function createPdSession(
         ]);
       },
       stopPlayer() { send("whistle-player-stop", ["bang"]); },
+      interaction({ players, proximity }: InteractionSound) {
+        send("whistle-interaction", [Math.round(bounded(players, 1, 8)), bounded(proximity, 0, 1)]);
+      },
       event(frequency: number, gain: number, pan: number) {
         send("whistle-event", [bounded(frequency, 20, 20000), bounded(gain, 0, 0.12), bounded(pan, -1, 1)]);
       },
@@ -116,7 +128,7 @@ export async function createPdSession(
         node!.destroy();
         node!.disconnect();
         node!.port.close();
-        await context.close();
+        if (owned) await context.close();
       },
     };
   } catch (error) {
@@ -124,7 +136,7 @@ export async function createPdSession(
     node?.destroy();
     node?.disconnect();
     node?.port.close();
-    await context.close();
+    if (owned) await context.close();
     throw error;
   }
 }

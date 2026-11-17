@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { clone, uid, type World } from "@/lib/world";
 import { editTile, type TerrainTool } from "@/lib/tile";
 import { flatTerrain, type Surface } from "@/lib/terrain";
@@ -13,7 +13,8 @@ type PaintOptions = {
   selectedAsset: string;
 };
 
-export function useWorldDocument(initialWorld: World, onChange: (world: World) => void) {
+export function useWorldDocument(initialWorld: World, onChange: (world: World) => void,
+  submit?: RefObject<((before: World, next: World) => boolean) | null>) {
   const [world, setWorld] = useState(initialWorld);
   const worldRef = useRef(world);
   const history = useRef<World[]>([]);
@@ -44,12 +45,13 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
   }, [deriveWorld]);
 
   const commit = useCallback((next: World) => {
+    if (submit?.current?.(worldRef.current, next)) return;
     revealChanges(next);
     history.current.push(clone(worldRef.current));
     if (history.current.length > 40) history.current.shift();
     future.current = [];
     applyWorld(next);
-  }, [applyWorld, revealChanges]);
+  }, [applyWorld, revealChanges, submit]);
 
   const edit = useCallback((change: (world: World) => void) => {
     const next = clone(worldRef.current);
@@ -125,11 +127,16 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
   }, [applyWorld, commit, revealChanges]);
 
   const endStroke = useCallback(() => { strokeBase.current = null; }, []);
+  const receiveShared = useCallback((next: World) => {
+    worldRef.current = next;
+    setWorld(next);
+    strokeBase.current = null;
+  }, []);
 
   return {
     world, getWorld, deriveWorld, feedback,
     canUndo: history.current.length > 0,
     canRedo: future.current.length > 0,
-    commit, edit, load, undo, redo, paint, endStroke,
+    commit, edit, load, undo, redo, paint, endStroke, receiveShared,
   };
 }

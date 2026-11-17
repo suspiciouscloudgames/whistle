@@ -11,6 +11,8 @@ type Props = {
   onEnd: () => void;
   onHold: (i: number) => void;
   canHold: boolean;
+  onCursor?: (cell: number | null) => void;
+  disabled?: boolean;
 };
 export function PaintGrid(p: Props) {
   const { t } = useLanguage();
@@ -35,13 +37,15 @@ export function PaintGrid(p: Props) {
       role="group"
       aria-label={t("격자")}
       style={{ gridTemplateColumns: `repeat(${p.size},1fr)` }}
+      onPointerLeave={() => p.onCursor?.(null)}
       onPointerDown={(e) => {
-        if (e.button !== 0 || gesture.current) return;
+        if (p.disabled || e.button !== 0 || gesture.current) return;
         const button = (e.target as HTMLElement).closest<HTMLButtonElement>(
           "[data-cell]",
         );
         if (!button) return;
         const i = Number(button.dataset.cell);
+        p.onCursor?.(i);
         e.currentTarget.setPointerCapture(e.pointerId);
         const g = {
           id: e.pointerId,
@@ -63,6 +67,12 @@ export function PaintGrid(p: Props) {
           }, 450);
       }}
       onPointerMove={(e) => {
+        if (p.onCursor) {
+          const r = e.currentTarget.getBoundingClientRect();
+          const x = Math.floor((e.clientX - r.left) / r.width * p.size);
+          const z = Math.floor((e.clientY - r.top) / r.height * p.size);
+          p.onCursor(x >= 0 && z >= 0 && x < p.size && z < p.size ? z * p.size + x : null);
+        }
         const g = gesture.current;
         if (!g || g.id !== e.pointerId || g.held) return;
         if (Math.hypot(e.clientX - g.x, e.clientY - g.y) < 7 && !g.moved)
@@ -120,6 +130,9 @@ export function PaintGrid(p: Props) {
           data-cell={i}
           className={`grid-cell ${p.cellClass(i)}`}
           aria-label={p.label(i)}
+          disabled={p.disabled}
+          onFocus={() => p.onCursor?.(i)}
+          onBlur={() => p.onCursor?.(null)}
           onClick={(e) => {
             if (e.detail === 0) {
               p.onPaint([i], p.occupied(i));
