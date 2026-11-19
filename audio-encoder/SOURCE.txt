@@ -1,0 +1,6 @@
+@breezystack/lamejs 1.2.7
+Author: Alex Zhukov; fork: breezygideon
+License: LGPL-3.0 (see LICENSE)
+Source: https://github.com/gideonstele/lamejs
+Package: https://registry.npmjs.org/@breezystack/lamejs/-/lamejs-1.2.7.tgz
+The unmodified encoder is loaded as a separate module and can be replaced with a compatible module exporting Mp3Encoder.
