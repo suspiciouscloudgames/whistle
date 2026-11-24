@@ -7,6 +7,7 @@ for (const [kind, label] of [["image", "이미지"], ["text", "텍스트"], ["so
   test(`${kind} shares delete/save controls and keeps placement deletion separate and undoable`, async ({ page }) => {
     if (kind === "text") await page.setViewportSize({ width: 390, height: 844 });
     const world = terrainFixtures().flat;
+    world.workshop = {id: "completed-content", serial: 0, next: 0, pending: []};
     const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9l0AAAAASUVORK5CYII=";
     world.assets.push({ id: "media", name: "sample", shape: "sphere", color: "#111111", solid: false,
       ...(kind === "sound" ? { sound: { data: "data:audio/wav;base64,AAAA", duration: 1, mode: "loop" as const, volume: 0.7 } }
@@ -51,7 +52,6 @@ for (const [kind, label] of [["image", "이미지"], ["text", "텍스트"], ["so
     await page.getByRole("button", { name: "되돌리기", exact: true }).click();
     await expect.poll(async () => (await saved()).objects.length).toBe(2);
     expect((await saved()).rules).toHaveLength(1);
-    await page.getByRole("button", { name: `${label} 만들기`, exact: true }).click();
-    await expect(footer.getByRole("button")).toHaveText(["저장"]);
+    await expect(page.getByRole("button", { name: `${label} 만들기`, exact: true })).toHaveCount(0);
   });
 }

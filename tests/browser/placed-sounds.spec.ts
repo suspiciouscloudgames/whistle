@@ -1,7 +1,8 @@
-import { probePd, pdProbe } from "./pd-probe";
 import { savedWorld } from "./world-storage";
 import { test, expect, type Page } from "@playwright/test";
 import { terrainFixtures } from "../terrain-fixtures";
+import { probePd, pdProbe } from "./pd-probe";
+import { withEmptyContent } from "./content-fixture";
 
 test.setTimeout(90_000);
 
@@ -46,31 +47,34 @@ test.beforeEach(async ({ page }) => {
         return source;
       }
     };
-  }, terrainFixtures().flat);
+  }, withEmptyContent(terrainFixtures().flat, "sound"));
   await probePd(page);
   await page.goto(".");
   await expect(page.getByRole("button", { name: "파일 저장", exact: true })).toHaveAttribute("aria-description", "이 브라우저에 저장됨");
 });
 
 async function upload(page: Page, seconds = 0.5) {
-  await page.getByRole("button", { name: "사운드 만들기" }).click();
+  await page.getByRole("button", { name: "사운드 입력", exact: true }).click();
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "사운드 불러오기", exact: true }).click();
   await (await chooser).setFiles({ name: "목소리.wav", mimeType: "audio/wav", buffer: wav(seconds) });
   await expect(page.getByRole("button", { name: "저장", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "미리 듣기", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "저장", exact: true }).click();
+  await page.locator('[data-symbol-kind="sound"][data-empty-symbol="false"]').click();
+  await page.getByRole("button", {name: "배치 삭제", exact: true}).click();
+  await page.getByRole("button", {name: "배치: 1", exact: true}).click();
 }
 
 test("upload, place, save, reload, mix with Pd, pause, resume and remove", async ({ page }) => {
   await upload(page);
   await page.locator('[data-cell="126"]').click();
-  await expect(page.locator('[data-cell="126"] [data-symbol-site]')).toBeVisible();
+  await expect(page.locator('[data-cell="126"] [data-symbol-site][data-symbol-kind=sound][data-empty-symbol=false]')).toBeVisible();
   await expect(page.locator(".sound-range").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "파일 저장", exact: true })).toHaveAttribute("aria-description", "이 브라우저에 저장됨");
   await page.reload();
   await expect(page.getByRole("button", { name: "배치: 1", exact: true })).toBeVisible();
-  await expect(page.locator('[data-cell="126"] [data-symbol-site]')).toBeVisible();
+  await expect(page.locator('[data-cell="126"] [data-symbol-site][data-symbol-kind=sound][data-empty-symbol=false]')).toBeVisible();
   await page.getByRole("button", { name: "플레이", exact: true }).click();
   await expect.poll(async () => (await probe(page)).active).toBe(1);
   await expect.poll(async () => (await probe(page)).rms).toBeGreaterThan(0.01);
@@ -86,13 +90,13 @@ test("upload, place, save, reload, mix with Pd, pause, resume and remove", async
   await page.getByRole("button", { name: "편집", exact: true }).click();
   await page.getByRole("button", { name: "사운드 삭제" }).click();
   await expect(page.getByRole("button", { name: "배치: 1", exact: true })).toHaveCount(0);
-  await expect(page.locator('[data-cell="126"] [data-symbol-site]')).toHaveCount(0);
+  await expect(page.locator('[data-cell="126"] [data-symbol-site][data-symbol-kind=sound][data-empty-symbol=false]')).toHaveCount(0);
   await page.getByRole("button", { name: "되돌리기", exact: true }).click();
-  await expect(page.locator('[data-cell="126"] [data-symbol-site]')).toBeVisible();
+  await expect(page.locator('[data-cell="126"] [data-symbol-site][data-symbol-kind=sound][data-empty-symbol=false]')).toBeVisible();
 });
 
 test("rejects large, invalid and long uploads without saving", async ({ page }) => {
-  await page.getByRole("button", { name: "사운드 만들기" }).click();
+  await page.getByRole("button", { name: "사운드 입력", exact: true }).click();
   const file = page.getByLabel("사운드 파일", { exact: true });
   await file.setInputFiles({ name: "large.wav", mimeType: "audio/wav", buffer: Buffer.alloc(10_000_001) });
   await expect(page.getByRole("alert")).toHaveText("파일 용량이 10MB를 초과했습니다.");
@@ -106,19 +110,20 @@ test("rejects large, invalid and long uploads without saving", async ({ page }) 
 
 test("sound placement limit and portable world file roundtrip", async ({ page }) => {
   await upload(page);
-  for (let i = 0; i < 21; i++) await page.locator(`[data-cell="${i}"]`).click();
-  await expect(page.locator("[data-symbol-site]")).toHaveCount(20);
+  const cells = await page.locator('[data-cell]').filter({hasNot:page.locator('[data-empty-symbol="true"]')}).evaluateAll(nodes=>nodes.slice(0,21).map(node=>node.getAttribute("data-cell")));
+  for (const cell of cells) await page.locator(`[data-cell="${cell}"]`).click();
+  await expect(page.locator("[data-symbol-site][data-symbol-kind=sound][data-empty-symbol=false]")).toHaveCount(20);
   await expect(page.locator(".toast")).toContainText("20개");
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "파일 저장", exact: true }).click();
   const path = await (await download).path();
   await page.getByRole("button", { name: "편집", exact: true }).click();
   await page.getByRole("button", { name: "사운드 삭제" }).click();
-  await expect(page.locator("[data-symbol-site]")).toHaveCount(0);
+  await expect(page.locator("[data-symbol-site][data-symbol-kind=sound][data-empty-symbol=false]")).toHaveCount(0);
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "불러오기", exact: true }).click();
   await (await chooser).setFiles(path!);
-  await expect(page.locator("[data-symbol-site]")).toHaveCount(20);
+  await expect(page.locator("[data-symbol-site][data-symbol-kind=sound][data-empty-symbol=false]")).toHaveCount(20);
   await expect(page.getByRole("button", { name: "배치: 1", exact: true })).toBeVisible();
 });
 
@@ -127,7 +132,7 @@ test("sound editor fits mobile and updates the existing material", async ({ page
   await upload(page, 5);
   for (const cell of [125, 126]) await page.locator(`[data-cell="${cell}"]`).click();
   await page.getByRole("button", { name: "배치: 1", exact: true }).click();
-  await page.locator('[data-cell="126"] [data-symbol-site]').click();
+  await page.locator('[data-cell="126"] [data-symbol-site][data-symbol-kind=sound][data-empty-symbol=false]').click();
   await expect(page.getByLabel("사운드 이름", { exact: true })).toHaveValue("1");
   await expect(page.getByLabel("사운드 이름", { exact: true })).toHaveAttribute("maxlength", "12");
   await page.getByLabel("사운드 이름", { exact: true }).fill("물소리");
@@ -164,7 +169,7 @@ test("uploaded stereo WAV is compressed, keeps stereo and can be previewed", asy
     bytes.writeInt16LE(Math.round(Math.sin(i / rate * Math.PI * 880) * 8000), 44 + i * 4);
     bytes.writeInt16LE(Math.round(Math.sin(i / rate * Math.PI * 1320) * 4000), 46 + i * 4);
   }
-  await page.getByRole("button", { name: "사운드 만들기" }).click();
+  await page.getByRole("button", { name: "사운드 입력", exact: true }).click();
   await page.getByLabel("사운드 파일", { exact: true }).setInputFiles({ name: "stereo.wav", mimeType: "audio/wav", buffer: bytes });
   await expect(page.getByRole("button", { name: "저장", exact: true })).toBeEnabled();
   const result = await page.locator("audio").evaluate(async element => {
@@ -187,7 +192,7 @@ test("uploaded stereo WAV is compressed, keeps stereo and can be previewed", asy
 });
 
 test("a full minute is accepted and compressed below 1 MB", async ({ page }) => {
-  await page.getByRole("button", { name: "사운드 만들기" }).click();
+  await page.getByRole("button", { name: "사운드 입력", exact: true }).click();
   await page.getByLabel("사운드 파일", { exact: true }).setInputFiles({ name: "minute.wav", mimeType: "audio/wav", buffer: wav(60) });
   await expect(page.getByRole("button", { name: "저장", exact: true })).toBeEnabled({ timeout: 45000 });
   const result = await page.locator("audio").evaluate(async element => {

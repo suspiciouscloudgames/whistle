@@ -1,13 +1,15 @@
 import { test, expect, type Page } from "@playwright/test";
-import { createMeetingWorld, type MeetingMessage, type MeetingView } from "../../lib/meeting";
+import { createMeetingWorld, localMeetingView, meetingCell, type MeetingMessage, type MeetingView } from "../../lib/meeting";
 import { createMeetingCodec } from "../../lib/meeting-wire";
 import { flatTerrain } from "../../lib/terrain";
 import type { World } from "../../lib/world";
 import { savedWorld } from "./world-storage";
+import { probePd, pdMessages } from "./pd-probe";
 
 test.setTimeout(150_000);
 
 async function prepare(page: Page, world: World) {
+  await probePd(page);
   let view: MeetingView | undefined;
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -109,6 +111,38 @@ test("two players stop at rounded void edges on desktop and mobile; only a hole 
   } finally { await ca.close(); await cb.close(); }
 });
 
+test("losing my relay connection returns me safely and removes the black footing after I walk home offline", async ({ page }) => {
+  const world=createMeetingWorld(17);
+  world.terrain={...flatTerrain(world.size),floating:true};
+  const observed=await prepare(page,world);
+  let disconnect=()=>{};
+  await page.routeWebSocket(/\/whistle\/meeting\?/,socket=>{
+    const id=new URL(socket.url()).searchParams.get("id")!;
+    const view=localMeetingView(id,world);
+    const gate={id:"offline-return",members:[id,"peer"] as [string,string],x:12,z:4,built:true,opened:true,online:true};
+    view.connections=[gate];view.joined=[id,"peer"];
+    view.ownWorld.connectionFootings=[{id:gate.id,side:0,row:4,built:true,created:1}];
+    for(const x of [11,12])view.world.terrain!.tiles[meetingCell(x,4)]={height:0,surface:"plain"};
+    view.reset={id:1,player:{x:11,z:4,yaw:Math.PI/2,grounded:true}};
+    socket.send(JSON.stringify({type:"state",view,presence:{peers:[{id,online:true},{id:"peer",online:true}],canWhistle:true,onlineCount:2}}));
+    disconnect=()=>socket.close({code:4002});
+  });
+  await page.goto(`?meeting=offline-footing-${Date.now()}`);await ready(page);await play(page);
+  await expect.poll(async()=>(await state(page)).x).toBeCloseTo(11,1);
+  await advance(page,.25);disconnect();
+  await expect(page.locator("main")).toHaveAttribute("data-meeting-status","offline");
+  await expect.poll(async()=>(await state(page)).x).toBeCloseTo(12,1);
+  expect((await state(page)).ground).not.toBeNull();
+  await pose(page,12,4,Math.PI/2);await page.keyboard.down("KeyW");
+  try{await expect.poll(async()=>(await state(page)).x).toBeGreaterThan(13.1);}
+  finally{await page.keyboard.up("KeyW");}
+  expect(await falls(page)).toBe(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-connection], [data-approach]')).toHaveCount(0);
+  await expect.poll(async()=>(await savedWorld(page)).connectionFootings?.length).toBe(0);
+  expect(observed.errors).toEqual([]);
+});
+
 test("crossing a lemon footing unlocks both editors and sharing; disconnect returns the visitor safely", async ({ browser, baseURL }, info) => {
   test.setTimeout(180_000);
   const ca = await browser.newContext({ baseURL, viewport: { width: 640, height: 480 } });
@@ -133,6 +167,8 @@ test("crossing a lemon footing unlocks both editors and sharing; disconnect retu
     await b.getByRole("textbox", { name: "텍스트 입력", exact: true }).fill("연결 직후 보내는 장면");
     await b.getByRole("button", { name: "저장", exact: true }).click();
     await play(b);
+    await expect(b.getByRole("button", {name: "휘슬", exact: true})).toBeDisabled();
+    await expect(b.locator('.meeting-whistle circle')).toHaveCSS("fill", "rgb(17, 17, 17)");
     await expect.poll(() => bb.view()?.approaches.length).toBe(1);
     const outline = bb.view().approaches[0];
     await pose(b, 13.15, outline.z, -Math.PI / 2);
@@ -156,6 +192,10 @@ test("crossing a lemon footing unlocks both editors and sharing; disconnect retu
     finally { await b.keyboard.up("KeyW"); }
     expect(bb.view().joined).toHaveLength(2);
     expect(await falls(b)).toBe(0);
+    await expect(b.getByRole("button", {name: "휘슬", exact: true})).toBeEnabled();
+    await expect(b.locator('.meeting-whistle circle')).toHaveCSS("fill", "rgb(243, 239, 145)");
+    await b.getByRole("button", {name: "휘슬", exact: true}).click();
+    await expect.poll(async () => (await pdMessages(b, "whistle-blow")).length).toBe(1);
     await b.keyboard.press("Escape");
     for (const [page, observed] of [[a, aa], [b, bb]] as const) {
       await expect(page.locator('.turn-status')).toHaveCount(0);
@@ -183,6 +223,8 @@ test("crossing a lemon footing unlocks both editors and sharing; disconnect retu
     await advance(b, .25);
     await a.close();
     await expect.poll(() => bb.view().reset.reason).toBe("disconnect");
+    await expect(b.getByRole("button", {name: "휘슬", exact: true})).toBeDisabled();
+    await expect(b.locator('.meeting-whistle circle')).toHaveCSS("fill", "rgb(17, 17, 17)");
     await expect.poll(async () => (await state(b)).x).toBeCloseTo(12, 1);
     expect((await state(b)).ground).not.toBeNull();
     await pose(b, 12, gate.z, -Math.PI / 2);

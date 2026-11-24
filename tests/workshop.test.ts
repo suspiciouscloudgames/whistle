@@ -163,6 +163,24 @@ test("empty symbols cannot accidentally create a bridge or canopy",()=>{
   assert.equal(deriveStructures(w).length,0);
 });
 
+test("an unplaced empty symbol is restored on a spaced floor without multiplying or losing its kind", () => {
+  const world = createMeetingWorld(2);
+  fill(world, world.assets.find(emptySymbol)!);
+  const prompt = world.assets.find(emptySymbol)!;
+  world.objects = world.objects.filter(o => o.asset !== prompt.id);
+  for (const tile of world.terrain!.tiles) tile.void = true;
+  refillSymbols(world);
+  assert.equal(world.assets.filter(emptySymbol).length, 1);
+  assert.equal(world.objects.some(o => o.asset === prompt.id), false);
+  world.terrain!.tiles[0] = {surface: "slick", height: -1, hole: false};
+  refillSymbols(world);
+  assert.deepEqual(world.objects.filter(o => o.asset === prompt.id).map(o => [o.x, o.z]), [[0, 0]]);
+  const snapshot = structuredClone(world);
+  refillSymbols(world);
+  assert.deepEqual(world, snapshot);
+  assert.equal(world.assets.find(emptySymbol)!.prompt!.kind, "image");
+});
+
 test("off-turn content edits and earned replenishment are allowed, relocation and terrain are not",()=>{
   const before=createMeetingWorld(4),after=structuredClone(before);
   fill(after,after.assets.find(emptySymbol)!);

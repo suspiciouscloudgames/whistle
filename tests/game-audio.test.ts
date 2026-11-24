@@ -17,21 +17,21 @@ test("board height accepts metres within the test range and rejects invalid meas
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function session() {
-  const edits: unknown[] = [], moves: PlayerSound[] = [], gates: boolean[] = [], events: unknown[] = [], meteors: boolean[] = [];
+  const edits: unknown[] = [], moves: PlayerSound[] = [], gates: boolean[] = [], events: unknown[] = [], whistles: number[][] = [];
   let closed = 0, stops = 0, suspends = 0, resumes = 0;
   return {
-    edits, moves, gates, events, meteors, get closed() { return closed; }, get stops() { return stops; },
+    edits, moves, gates, events, whistles, get closed() { return closed; }, get stops() { return stops; },
     get suspends() { return suspends; }, get resumes() { return resumes; },
     value: {
       context: { resume: async () => { resumes++; }, suspend: async () => { suspends++; } } as unknown as AudioContext,
       edit: (value: unknown) => edits.push(value),
       player: (value: PlayerSound) => moves.push(value),
       stopPlayer: () => { stops++; },
-      event: (...values: number[]) => events.push(values),
-      meteor: (value: boolean) => meteors.push(value),
+      event: (name: string, on: boolean) => events.push([name, on]),
+      whistle: (gain: number, pan: number) => whistles.push([gain, pan]),
       mute: (value: boolean) => gates.push(value),
       close: async () => { closed++; },
-    } as Pick<InteractionSession, "context" | "edit" | "player" | "stopPlayer" | "event" | "meteor" | "mute" | "close">,
+    } as Pick<InteractionSession, "context" | "edit" | "player" | "stopPlayer" | "event" | "whistle" | "mute" | "close">,
   };
 }
 const sound = { x: 0.5, z: 0.5, overlap: 0 };
@@ -81,7 +81,7 @@ test("one session keeps only the latest edit during startup and cancels it on pl
   const moveCount = stub.moves.length;
   audio.pause();
   audio.movement(moving);
-  audio.event(440, 0.1, 0);
+  audio.event("fallingstar", true);
   assert.equal(stub.moves.length, moveCount);
   assert.equal(stub.stops, 2);
   assert.equal(stub.gates.at(-1), true);
@@ -107,7 +107,7 @@ test("pending load cannot replay stale input after exiting or unmounting", async
     await tick();
     assert.equal(stub.edits.length, 0);
     assert.equal(stub.moves.length, 0);
-    assert.equal(stub.gates.length, 0);
+    assert.deepEqual(stub.gates, dispose ? [] : [true]);
     assert.equal(stub.closed, Number(dispose));
   }
 });
@@ -148,6 +148,21 @@ test("pause: 잠시 뒤 AudioContext를 멈추고(패치 처리 중단), 그 전
   audio.dispose();
 });
 
+test("a slow engine load after the tab is hidden also suspends audio processing", async () => {
+  const stub=session();
+  let finish!: (value:typeof stub.value)=>void;
+  const audio=createGameAudio(()=>new Promise(resolve=>{finish=resolve;}),error=>assert.fail(String(error)));
+  audio.play();audio.pause();
+  await new Promise(resolve=>setTimeout(resolve,200));
+  finish(stub.value);await tick();
+  assert.equal(stub.gates.at(-1),true);
+  await new Promise(resolve=>setTimeout(resolve,200));
+  assert.equal(stub.suspends,1);
+  audio.resume();await tick();
+  assert.equal(stub.resumes,1);
+  audio.dispose();
+});
+
 test("player state goes to Pd as four route-able messages", () => {
   const sent: string[] = [];
   const to = { send: (bus: string, message: (string | number)[]) => { sent.push(`${bus} ${message.join(" ")}`); } };
@@ -162,28 +177,68 @@ test("player state goes to Pd as four route-able messages", () => {
   ]);
 });
 
-test("meteor sound follows the latest state, sends only changes, and stops on pause and exit", async () => {
+test("events set while loading or paused reach Pd once the session runs; play/stop forget them", async () => {
   const stub = session();
   let finish!: (value: typeof stub.value) => void;
-  const audio = createGameAudio(() => new Promise(resolve => { finish = resolve; }), error => assert.fail(String(error)));
-  audio.play(); audio.meteor(true); audio.meteor(false);
-  finish(stub.value); await tick();
-  assert.deepEqual(stub.meteors, [false]);
-  for (let i = 0; i < 60; i++) audio.meteor(true);
-  assert.deepEqual(stub.meteors, [false, true]);
-  audio.pause(); audio.meteor(true);
-  assert.equal(stub.meteors.at(-1), false);
-  audio.resume(); await tick(); audio.meteor(true);
-  assert.equal(stub.meteors.at(-1), true);
+  const audio = createGameAudio(() => new Promise((resolve) => { finish = resolve; }), (error) => assert.fail(String(error)));
+  audio.play();
+  audio.event("rain", true);
+  finish(stub.value);
+  await tick();
+  assert.deepEqual(stub.events, [["rain", true]], "엔진이 열리면 보낸다");
+  audio.pause();
+  audio.event("rain", false);
+  assert.deepEqual(stub.events, [["rain", true], ["rain", false]], "일시정지 때 끄고 멈춘 동안은 보내지 않는다");
+  audio.resume();
+  await tick();
+  assert.deepEqual(stub.events.at(-1), ["rain", false], "다시 켜면 마지막 값을 보낸다");
   audio.stop();
-  assert.equal(stub.meteors.at(-1), false);
+  audio.play();
+  await tick();
+  assert.equal(stub.events.length, 2, "새 플레이는 지난 값을 다시 보내지 않는다");
   audio.dispose();
 });
 
-test("meteor controls and existing numeric rule events use separate Pd routes", () => {
-  const sent: unknown[] = [];
-  const sender = { send: (bus: string, message: unknown) => sent.push([bus, message]) };
-  const messages = interactionMessages({edit:sender,player:sender,event:sender});
-  messages.meteor(true); messages.meteor(false); messages.event(440, .1, 0);
-  assert.deepEqual(sent, [["whistle-event", ["fallingstar", 1]], ["whistle-event", ["fallingstar", 0]], ["whistle-event", [440, .1, 0]]]);
+test("game events go to Pd as whistle-event <name> 1/0", () => {
+  const sent: string[] = [];
+  const to = { send: (bus: string, message: (string | number)[]) => { sent.push(`${bus} ${message.join(" ")}`); } };
+  const messages = interactionMessages({ edit: to, player: to, event: to });
+  messages.event("fallingstar", true);
+  messages.event("fallingstar", false);
+  messages.event("rain", true);
+  assert.deepEqual(sent, ["whistle-event fallingstar 1", "whistle-event fallingstar 0", "whistle-event rain 1"]);
+});
+
+test("rain and meteors stop before editing and unchanged frames do not resend events", async () => {
+  const stub = session();
+  const audio = createGameAudio(async () => stub.value, error => assert.fail(String(error)));
+  audio.play(); await tick();
+  for (let i = 0; i < 100; i++) {
+    audio.event("rain", true);
+    audio.event("fallingstar", true);
+  }
+  assert.deepEqual(stub.events, [["rain", true], ["fallingstar", true]]);
+  audio.stop();
+  audio.edit(sound); await tick();
+  assert.deepEqual(stub.events.slice(-2), [["rain", false], ["fallingstar", false]]);
+  audio.play(); await tick();
+  audio.event("rain", true);
+  assert.deepEqual(stub.events.at(-1), ["rain", true]);
+  audio.dispose();
+});
+
+test("whistles play once and never survive pausing, exiting, or a pending load", async () => {
+  const stub = session();
+  let finish!: (value: typeof stub.value) => void;
+  const audio = createGameAudio(() => new Promise(resolve => { finish = resolve; }), error => assert.fail(String(error)));
+  audio.play(); audio.whistle(1, 0); audio.pause();
+  finish(stub.value); await tick();
+  audio.resume(); await tick();
+  assert.deepEqual(stub.whistles, []);
+  audio.whistle(.4, -.8);
+  assert.deepEqual(stub.whistles, [[.4, -.8]]);
+  audio.pause(); audio.whistle(1, 0); audio.resume(); await tick();
+  audio.stop(); audio.whistle(1, 0); audio.play(); await tick();
+  assert.deepEqual(stub.whistles, [[.4, -.8]]);
+  audio.dispose();
 });

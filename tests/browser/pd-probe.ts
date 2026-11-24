@@ -19,7 +19,7 @@ export async function probePd(page: Page) {
     const module = await original(...args);
     const proto = module.Pd4Web.prototype, send = proto.sendMessage;
     proto.sendMessage = function (target, selector, list) {
-      if (selector === "obj" && /^pd-slot/.test(target) && list[2] !== "dac~") window.pdProbe.starts.push(list[2]);
+      if (target === "whistle-slot" && selector === "on") window.pdProbe.starts.push(list[1]); // on 번호 패치 이름 L R
       if (/^whistle-/.test(target)) window.pdProbe.messages.push({bus: target + " " + selector, value: list});
       return send.call(this, target, selector, list);
     };

@@ -30,6 +30,7 @@ test("the normal page opens, edits, saves and plays without a multiplayer server
 });
 
 test("the same document follows room addresses while separate tabs retain their own work",async({page,context})=>{
+  await context.routeWebSocket(/\/whistle\/meeting\?/,socket=>socket.close());
   await page.goto(".");await ready(page);
   await page.getByRole("button",{name:"높이기",exact:true}).click();
   await page.locator('[data-cell="126"]').click();

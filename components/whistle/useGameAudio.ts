@@ -1,14 +1,15 @@
 "use client";
 import { useEffect, useMemo, useRef } from "react";
-import { createInteractionSession, type EditSound } from "@/lib/audio/pd-session";
+import { createInteractionSession, type EditSound, type GameEvent } from "@/lib/audio/pd-session";
 import { createGameAudio } from "@/lib/audio/game-audio";
 import { playerSound, type PlayerAudioFrame } from "@/lib/audio/game-parameters";
 import { createPlacedSounds } from "@/lib/audio/placed-sounds";
-import { engineStage, openEngine, unlockAudio } from "@/lib/audio/pd-runtime";
+import { openEngine, unlockAudio } from "@/lib/audio/pd-runtime";
 import { createSoundscape } from "@/lib/audio/soundscape";
 import { createGameSoundscape, type GameSoundscape } from "@/lib/audio/game-soundscape";
 import { flatTerrain } from "@/lib/terrain";
-import type { Actor, World, Event, Player } from "@/lib/world";
+import type { Actor, World, Player } from "@/lib/world";
+import type { MeetingWhistle } from "@/lib/meeting";
 import type { WorldDerivation } from "@/lib/world-derivation";
 
 const BASE = `${import.meta.env.BASE_URL}audio/`;
@@ -66,8 +67,8 @@ async function createGameMix(onBlocked: () => void) {
       diffuse,
       // 거리에 따른 음량은 game-soundscape가 영역 외곽까지 거리로 정한다(패너 감쇠는 쓰지 않음).
       rolloff: 0,
-      // 같은 패치가 여러 영역에 동시에 뜨므로 영역 버스(whistle-region)는 슬롯별로 보낸다(패치는 [r $1-whistle-region]).
-      start: (_c, name) => engine.start(name, { scoped: true }),
+      // 영역 버스(whistle-region)는 영역마다 따로 간다(패치는 [r $1-whistle-region]).
+      start: (_c, name) => engine.start(name),
       onEvent: (event) => {
         if (event.type === "error") console.warn(`[Whistle:Audio] ${event.id} ${event.patch} 로드 실패`, event.error);
         else if (event.type === "active" || event.type === "released") log(`${event.id} ${event.patch} ${event.type === "active" ? "켜짐" : "꺼짐"}`);
@@ -100,11 +101,9 @@ async function createGameMix(onBlocked: () => void) {
   }
 }
 
-const INTERACTION_PATCH_NAMES = ["edit", "player", "event"];
+const INTERACTION_PATCH_NAMES = ["main"];
 
 export type GameAudioDebug = {
-  /** 엔진을 여는 중 지금 단계(아직 안 열렸을 때 무엇을 기다리는지) */
-  stage: string;
   context: { state: AudioContextState; sampleRate: number; latencyHint: AudioContextLatencyCategory; baseLatency: number; outputLatency?: number } | null;
   /** 시작된 상호작용 패치(오디오가 시작되면 3개가 계속 돈다) */
   interaction: string[];
@@ -149,7 +148,8 @@ export function useGameAudio(notify: (message: string) => void) {
         lastFrame.current = frame;
         controller.current?.movement(playerSound(frame));
         if (!enabled.current || paused.current || !world) return;
-        controller.current?.meteor(!!frame.meteors);
+        controller.current?.event("rain", world.weather === "rain");
+        controller.current?.event("fallingstar", !!frame.meteors);
         soundscape.current?.frame(frame, {
           size: world.size,
           tiles: tilesOf(world),
@@ -162,7 +162,6 @@ export function useGameAudio(notify: (message: string) => void) {
       debug: (): GameAudioDebug => {
         const mix = mixRef.current;
         return {
-          stage: engineStage,
           context: mix ? { state: mix.context.state, sampleRate: mix.context.sampleRate, latencyHint: latencyHint(),
             baseLatency: mix.context.baseLatency, outputLatency: mix.context.outputLatency } : null,
           interaction: mix ? INTERACTION_PATCH_NAMES : [],
@@ -174,13 +173,12 @@ export function useGameAudio(notify: (message: string) => void) {
           frame: lastFrame.current,
         };
       },
-      event: (event: Event, player: Player) => {
-        const distance = Math.hypot(event.x - player.x, event.z - player.z);
-        const angle = Math.atan2(event.x - player.x, -(event.z - player.z)) - player.yaw;
-        controller.current?.event(
-          [261.63, 329.63, 392, 523.25, 659.25][Math.abs(Math.round(event.x + event.z)) % 5],
-          0.12 / (1 + distance * 0.3), Math.sin(angle),
-        );
+      /** whistle-event <이름> 1/0 (fallingstar: 디버그 화면의 1 키. rain은 위 movement가 날씨로 보낸다) */
+      event: (name: GameEvent, on: boolean) => controller.current?.event(name, on),
+      whistle: (source: Pick<MeetingWhistle, "x" | "z">, listener: Player) => {
+        const distance = Math.hypot(source.x - listener.x, source.z - listener.z);
+        const angle = Math.atan2(source.x - listener.x, -(source.z - listener.z)) - listener.yaw;
+        controller.current?.whistle(1 / (1 + distance * .2), distance < .01 ? 0 : Math.sin(angle));
       },
     };
   }, []);

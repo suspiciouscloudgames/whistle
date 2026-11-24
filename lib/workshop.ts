@@ -24,8 +24,12 @@ function limitEmptySymbols(world: World) {
       world.objects = world.objects.filter(o => !removed.has(o.asset));
       world.rules = world.rules.filter(r => ![r.subject, r.source, r.replacement].some(id => removed.has(id)));
     }
-    state.pending = [];
     state.next = (kinds.indexOf(keep.prompt!.kind) + 1) % kinds.length;
+    if (!world.objects.some(o => o.asset === keep.id)) {
+      state.pending = [{ ...keep.prompt!, x: Math.max(0, world.start.x - 1), z: Math.max(0, world.start.z - 1) }];
+      return false;
+    }
+    state.pending = [];
     return true;
   }
   state.pending.splice(1);
@@ -36,8 +40,9 @@ export function refillSymbols(world: World) {
   const state = world.workshop;
   if (!state || limitEmptySymbols(world)) return;
   const authored = world.assets.filter(a => !a.received && (contentKind(a) || emptySymbol(a))).length;
+  const waiting = world.assets.find(emptySymbol);
   const pending = state.pending[0];
-  if (!pending || authored >= WORKSHOP_MATERIAL_LIMIT || world.assets.length >= MAX_LIBRARY_SIZE || world.objects.length >= 250) return;
+  if (!pending || (!waiting && (authored >= WORKSHOP_MATERIAL_LIMIT || world.assets.length >= MAX_LIBRARY_SIZE)) || world.objects.length >= 250) return;
   const distance = (a: { x: number; z: number }, b: { x: number; z: number }) => (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
   const cells = Array.from({ length: world.size ** 2 }, (_, i) => ({ x: i % world.size, z: Math.floor(i / world.size) }))
     .filter(p => world.terrain?.tiles[p.z * world.size + p.x] && !isGap(world.terrain.tiles[p.z * world.size + p.x]) &&
@@ -46,12 +51,15 @@ export function refillSymbols(world: World) {
     .filter(p => p.clearance >= MIN_SYMBOL_DISTANCE ** 2)
     .sort((a, b) => b.clearance - a.clearance || distance(a, pending) - distance(b, pending) || a.z - b.z || a.x - b.x);
   if (!cells.length) return;
-  let id: string;
-  do { id = `workshop-${state.id}-${++state.serial}`; } while (world.assets.some(a => a.id === id) || world.objects.some(o => o.id === `${id}-site`));
-  world.assets.push({ id, name: pending.title ? "장면 제목" : names[pending.kind], shape: pending.kind === "text" ? "cone" : "sphere",
-    color: "#777777", solid: false, prompt: { kind: pending.kind, ...(pending.title ? { title: true } : {}) } });
+  let id = waiting?.id;
+  if (!id) {
+    do { id = `workshop-${state.id}-${++state.serial}`; } while (world.assets.some(a => a.id === id) || world.objects.some(o => o.id === `${id}-site`));
+    world.assets.push({ id, name: pending.title ? "장면 제목" : names[pending.kind], shape: pending.kind === "text" ? "cone" : "sphere",
+      color: "#777777", solid: false, prompt: { kind: pending.kind, ...(pending.title ? { title: true } : {}) } });
+  }
   const { x, z } = cells[0];
-  world.objects.push({ id: `${id}-site`, asset: id, x, z, rotation: 0, scale: 1 });
+  const siteId = world.objects.some(o => o.id === `${id}-site`) ? uid() : `${id}-site`;
+  world.objects.push({ id: siteId, asset: id, x, z, rotation: 0, scale: 1 });
   state.pending = [];
   state.next = (kinds.indexOf(pending.kind) + 1) % kinds.length;
 }

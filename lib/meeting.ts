@@ -313,6 +313,12 @@ export function offlineMeetingWorld(view:MeetingView):World {
   return {...world,assets:world.assets.filter(a=>own(a.id)),objects:world.objects.filter(o=>own(o.id)),rules:world.rules.filter(r=>own(r.id)),
     terrain:{...world.terrain!,tiles:world.terrain!.tiles.map((tile,i)=>meetingOwner(i%MEETING_SIZE,Math.floor(i/MEETING_SIZE))===0||pads.has(i)?tile:emptyTile())}};
 }
+export function retireOfflineMeetingFootings(view:MeetingView, player:MeetingPosition):MeetingView {
+  if(!view.connections.length&&!view.approaches.length)return view;
+  if(!player.grounded||player.falling||meetingOwner(Math.round(player.x),Math.round(player.z))!==0)return view;
+  const cleared={...view,connections:[],approaches:[],joined:[view.id],ownWorld:{...view.ownWorld,connectionFootings:[]}};
+  return {...cleared,world:offlineMeetingWorld(cleared)};
+}
 export function localMeetingView(id:string,document=createMeetingWorld()):MeetingView {
   const room=createMeetingRoom(document.terrain?.seed);
   const member=addMeetingMember(room,id);member.document={...document,connectionFootings:[]};member.ready=true;

@@ -28,6 +28,7 @@ import { EditorToolbar } from "@/components/whistle/EditorToolbar";
 import { EditorPalette } from "@/components/whistle/EditorPalette";
 import { EditorBoard } from "@/components/whistle/EditorBoard";
 import { PlayControls } from "@/components/whistle/PlayControls";
+import { DebugOverlay } from "@/components/whistle/DebugOverlay";
 import type { MeetingSession } from "@/components/whistle/ConnectedWorld";
 import { MeetingOverlay, meetingVisuals } from "@/components/whistle/MeetingTools";
 import { createMeetingWorld, fixMeetingStart, withLocalMeetingWorld, meetingGlobal, meetingLocal, meetingOwner, meetingReturnPosition, authoredMaterialCount, MEETING_MATERIAL_LIMIT, MEETING_MATERIAL_MESSAGE } from "@/lib/meeting";
@@ -100,7 +101,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     toastTimer.current = setTimeout(() => setToast(""), 4200);
   }, []);
   const audio = useGameAudio(notify);
-  const whistle = useMeetingWhistle(meeting, playing, player);
+  const whistle = useMeetingWhistle(meeting, playing, player, audio.whistle);
   const meetingReset = useRef(meeting.view.reset.id);
   useLayoutEffect(() => {
     const reset=meeting.view.reset;
@@ -159,14 +160,9 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
       const next=stepSimulation(current.world,current.simulation,player.current);
       playingState.current={world:current.world,simulation:next};setPlayState(playingState.current);
       if(next.events.length)setLog(previous=>[...next.events,...previous].slice(0,12));
-      for(const event of next.events)if(event.action==="sound") {
-        const owner=meetingOwner(Math.round(event.x),Math.round(event.z));
-        audio.event(owner<0?event:{...event,...meetingLocal(owner,event)},
-          owner<0?player.current:{...player.current,...meetingLocal(owner,player.current)});
-      }
     },700);
     return()=>clearInterval(timer);
-  },[playing,audio]);
+  },[playing]);
   const symbols = world.assets.filter(asset => asset.image || asset.text?.trim() || asset.sound);
   const nextSoundName = String(Math.max(0, ...world.assets.filter(a => a.sound && /^[1-9]\d{0,5}$/.test(a.name)).map(a => Number(a.name))) + 1);
   const activeAsset = symbols.find(asset => asset.id === placingAsset)?.id ?? null;
@@ -208,7 +204,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   useEffect(()=>{
     if(!ready)return;
     if(!meeting.enabled)syncConnectionFootings([]);
-    else if(meeting.status==="online"&&meeting.view.documentReady)
+    else if(meeting.view.documentReady)
       syncConnectionFootings(meeting.view.ownWorld.connectionFootings);
   },[ready,meeting.enabled,meeting.status,meeting.view.documentReady,meeting.view.ownWorld.connectionFootings,syncConnectionFootings]);
   useEffect(() => {
@@ -388,6 +384,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /></svg>
           </button>
           <div className="crosshair" />
+          <DebugOverlay audio={audio} getWorld={() => activeWorld} derivation={activeDerivation} />
           <PlayControls
             key={`controls-${playKey}`}
             controls={controls}

@@ -27,10 +27,11 @@ test("toolbar and palette keep language, dialogs, and file selection connected",
   await page.getByRole("button", { name: "높이기", exact: true }).click();
   await page.locator('[data-cell="0"]').click();
   await page.locator('[data-cell="0"]').click();
-  await page.getByRole("button", { name: "텍스트 만들기", exact: true }).click();
+  await page.getByRole("button", { name: "장면 제목 입력", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("textbox", { name: "텍스트 입력" }).fill("처음 자리");
   await page.getByRole("button", { name: "저장", exact: true }).click();
+  await page.getByRole("button", {name: "배치: 처음 자리", exact: true}).click();
   await page.locator('[data-cell="0"]').click();
   await expect(page.locator('[data-cell="0"] [data-symbol-site] g')).toHaveAttribute("fill", "currentColor");
   await expect(page.getByRole("button", { name: "시작점", exact: true })).toHaveCount(0);

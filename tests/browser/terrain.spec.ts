@@ -44,9 +44,10 @@ test("initial terrain is built once; creating and placing content preserves it",
   await openWorld(page, world);
   const initial = await counts(page);
   expect(initial.makeTerrain).toBe(1);
-  await page.getByRole("button", { name: "텍스트 만들기", exact: true }).click();
+  await page.getByRole("button", { name: "장면 제목 입력", exact: true }).click();
   await page.getByRole("textbox", { name: "텍스트 입력" }).fill("새 자리");
   await page.getByRole("button", { name: "저장", exact: true }).click();
+  await page.getByRole("button", {name: "배치: 새 자리", exact: true}).click();
   await page.locator('[data-cell="0"]').click();
   await frames(page);
   expect(await counts(page)).toEqual(initial);

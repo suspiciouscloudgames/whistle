@@ -2,6 +2,7 @@ import { savedDocument } from "./world-storage";
 import { test, expect, type Page } from "@playwright/test";
 import { starterWorld, type World } from "../../lib/world";
 import { flatTerrain } from "../../lib/terrain";
+import { emptySymbol } from "../../lib/workshop";
 
 const STORAGE = "whistle.world.v2";
 const LEGACY_STORAGE = "whistle.world.v1";
@@ -30,6 +31,16 @@ async function open(page: Page, stored?: string, hash = "", key = STORAGE) {
 }
 async function storedValue(page: Page, key = STORAGE) {
   return key===STORAGE ? JSON.stringify(await savedDocument(page))??null : page.evaluate((key) => localStorage.getItem(key), key);
+}
+async function importedContent(page: Page) {
+  const world = structuredClone(await savedDocument(page));
+  if (!world) return null;
+  const prompts = new Set(world.assets.filter(emptySymbol).map(asset => asset.id));
+  world.assets = world.assets.filter(asset => !prompts.has(asset.id));
+  world.objects = world.objects.filter(object => !prompts.has(object.asset));
+  delete world.workshop;
+  delete world.connectionFootings;
+  return JSON.stringify(world);
 }
 async function expectPreserved(page: Page, original: string | null, key = STORAGE) {
   // Observe beyond the 350ms autosave debounce, including subsequent edits.
@@ -61,7 +72,7 @@ test("a failed legacy load preserves the old data and creates no v2 save", async
 test("normal loading and editing still autosave", async ({ page }) => {
   await open(page, JSON.stringify(savedWorld()));
   await page.getByRole("button", { name: "높이기", exact: true }).click();
-  await page.locator("[data-cell='0']").click();
+  await page.locator("[data-cell='0']").click({position:{x:2,y:2}});
   await expect.poll(async () => JSON.parse((await storedValue(page))!).terrain.tiles[0].height).toBe(1);
   expect(JSON.parse((await storedValue(page))!).title).toBe("보존할 세계");
 });
@@ -78,12 +89,12 @@ test("a valid file import resumes saving after a failed load", async ({ page }) 
     name: "world.whistle.json", mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(imported)),
   });
-  await expect.poll(() => storedValue(page)).toBe(JSON.stringify(imported));
+  await expect.poll(() => importedContent(page)).toBe(JSON.stringify(imported));
   expect(new URL(page.url()).hash).toBe("");
   await page.reload();
   await expect(page.getByRole("button", { name: "파일 저장", exact: true }))
     .toHaveAttribute("aria-description", "이 브라우저에 저장됨");
-  expect(await storedValue(page)).toBe(JSON.stringify(imported));
+  expect(await importedContent(page)).toBe(JSON.stringify(imported));
 });
 
 test("an invalid file import does not unlock autosave after a failed load", async ({ page }) => {
@@ -110,5 +121,5 @@ test("files larger than 6 MB load without a total size cap", async ({ page }) =>
     name: "large.whistle.json", mimeType: "application/json",
     buffer: Buffer.from(" ".repeat(6_000_001) + JSON.stringify(imported)),
   });
-  await expect.poll(() => storedValue(page)).toBe(JSON.stringify(imported));
+  await expect.poll(() => importedContent(page)).toBe(JSON.stringify(imported));
 });

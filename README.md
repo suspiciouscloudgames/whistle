@@ -18,8 +18,9 @@ npm run dev  # 개발 서버 시작
 
 ## 사운드 수정
 
-- `audio/patches/player.pd` 및 지형·환경 패치: 음색·리듬·볼륨 수정
-- 적용: Pd 저장 → `npm run build` → 페이지 새로고침 → 오디오 시작
+- 패치 폴더: `audio/patches/` (하위 폴더 가능, `[폴더/패치]`처럼 Pd와 같게). 엔진은 `audio/engine/`
+- 적용: Pd에서 저장 → 새로고침 없이 반영 (지금 떠 있는 그 패치는 다시 만들어지고, 새로 뜨는 것은 새 버전. 빌드·복사 없음)
+- 브라우저의 Pd는 패치 폴더를 통째로 받아 쓰므로 abstraction은 폴더에 두기만 하면 됨
 - 입력 파라미터 변경 시 연결 패치·앱 코드 확인
 - `audio/engine/`: pd4web 엔진 · `audio/patches/`: Pd 패치
 - `whistle-board-height`: 보드 높이 수신만 연결, 소리 변화 없음

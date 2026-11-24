@@ -86,7 +86,7 @@ test("artwork is reused for unrelated edits and refreshes after image replacemen
   await expect.poll(async () => (await picture()).image).toMatch(/^data:image/);
   const initial = await picture();
   await page.getByRole("button", { name: "높이기", exact: true }).click();
-  await page.locator('[data-cell="0"]').click();
+  await page.locator('[data-cell="0"]').click({position: {x: 2, y: 2}});
   await expect(page.locator('[data-cell="0"]')).toHaveAccessibleName(/높이 1/);
   const beforeEdit = await draws(page);
   await page.locator(".scene").scrollIntoViewIfNeeded();
@@ -124,9 +124,9 @@ test("artwork ground height follows terrain edits, actor movement, water and und
   expect((await position()).id).toBe(initial.id);
   await page.evaluate(() => {
     const actors = (globalThis as any).__performanceActors;
-    actors.current = actors.current.map((actor: any) => ({ ...actor, x: 5 }));
+    actors.current = actors.current.map((actor: any) => ({ ...actor, x: 4 }));
   });
-  await expect.poll(async () => (await position()).x).toBe(initial.x - 2);
+  await expect.poll(async () => (await position()).x).toBe(initial.x - 4);
   await expect.poll(async () => (await position()).y).toBe(0);
   await page.getByRole("button", { name: "되돌리기", exact: true }).click();
   await page.locator(".scene").scrollIntoViewIfNeeded();

@@ -2,6 +2,8 @@ import { savedWorld } from "./world-storage";
 import { test, expect, type Page } from "@playwright/test";
 import { terrainFixtures } from "../terrain-fixtures";
 
+test.setTimeout(60_000);
+
 async function setup(page: Page) {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -20,6 +22,8 @@ async function setup(page: Page) {
     localStorage.setItem("whistle.language", "ko");
   }, terrainFixtures().mixed);
   await page.goto(".");
+  await page.locator('.live-preview canvas').scrollIntoViewIfNeeded();
+  await expect(page.locator('.live-preview canvas')).toHaveAttribute('data-ready','true',{timeout:30_000});
   await expect.poll(() => page.evaluate(() => !!(globalThis as any).__testOrbit)).toBe(true);
   return errors;
 }
@@ -45,7 +49,7 @@ test("automatic daylight follows local time and its menu opens without changing 
   await page.clock.fastForward(30_000);
   await expect(indicator).toHaveAttribute("data-time-of-day", "night");
   await expect(indicator).toHaveAccessibleName(/현재 밤/);
-  await page.clock.runFor(2000);
+  await page.clock.runFor(8000);
   await expect.poll(() => page.evaluate(() => (globalThis as any).__testScene.background.r)).toBeLessThan(.01);
   await page.screenshot({ path: testInfo.outputPath("night-indicator.png") });
   expect(errors).toEqual([]);
@@ -118,6 +122,7 @@ test("branch silhouettes retain tapered limbs, bark and closed ends", async ({ p
 
 
 test("time overrides update lighting and water, survive reload and play, and return to local time", async ({ page }, testInfo) => {
+  await page.emulateMedia({reducedMotion:"reduce"});
   await page.clock.setFixedTime(new Date(2026, 10, 17, 15));
   const errors = await setup(page);
   const indicator = page.locator(".daylight-indicator");

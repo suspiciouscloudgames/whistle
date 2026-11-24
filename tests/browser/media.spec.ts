@@ -1,11 +1,12 @@
 import { savedWorld } from "./world-storage";
 import { test, expect, type Page } from "@playwright/test";
 import { terrainFixtures } from "../terrain-fixtures";
+import { withEmptyContent } from "./content-fixture";
 
 test.setTimeout(60_000);
 
 async function openMedia(page: Page, kind: "image" | "text" = "image") {
-  const world = terrainFixtures().flat;
+  const world = withEmptyContent(terrainFixtures().flat, kind);
   for (let z = 1; z <= 3; z++) for (let x = 1; x <= 3; x++) world.terrain!.tiles[z * world.size + x].surface = "soft";
   world.terrain!.tiles[9 * world.size + 9].height = 2;
   await page.addInitScript(world => {
@@ -17,7 +18,7 @@ async function openMedia(page: Page, kind: "image" | "text" = "image") {
   await page.goto(".");
   await expect(page.getByRole("button", { name: "파일 저장", exact: true }))
     .toHaveAttribute("aria-description", "이 브라우저에 저장됨");
-  await page.getByRole("button", { name: kind === "image" ? "이미지 만들기" : "텍스트 만들기", exact: true }).click();
+  await page.getByRole("button", { name: kind === "image" ? "이미지 입력" : "텍스트 입력", exact: true }).click();
 }
 
 const savedAssets = async(page:Page) => (await savedWorld(page)).assets;

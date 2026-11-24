@@ -154,7 +154,7 @@ start.onclick = async () => {
       context: ctx,
       destination: output,
       panning,
-      start: (_c, name) => engine.start(name, { scoped: true }),
+      start: (_c, name) => engine.start(name),
       onEvent: (event) => {
         log(event.type === "error"
           ? `${event.id} ${event.patch} 오류: ${event.error instanceof Error ? event.error.message : String(event.error)}`

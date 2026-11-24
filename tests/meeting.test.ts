@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { WebSocket } from "ws";
 import { createMeetingRoom, addMeetingMember, publishMeeting, moveMeeting, meetingNeighbors,
-  meetingView, meetingWorld, offlineMeetingWorld, localMeetingView, withLocalMeetingWorld, meetingVisibleMembers, meetingPresence, meetingOwner, meetingCell, meetingGlobal, meetingLocal,
+  meetingView, meetingWorld, offlineMeetingWorld, retireOfflineMeetingFootings, localMeetingView, withLocalMeetingWorld, meetingVisibleMembers, meetingPresence, meetingOwner, meetingCell, meetingGlobal, meetingLocal,
   connectionCandidates, createMeetingWorld, whistleMeeting, meetingWhistleRecipients, whistleForViewer,
   disconnectMeetingMember, leaveMeetingMember, reconcileMeeting, advanceMeetingTurns, meetingTurn, TURN_DURATION, MEETING_START, MEETING_SIZE,
   type MeetingMessage, type MeetingRoom } from "../lib/meeting.ts";
@@ -64,6 +64,23 @@ test("successive departures leave one return footing, which disappears on reachi
   const view=meetingView(r,"a");
   assert.equal(view.connections.length,0);assert.equal(view.approaches.length,1);
   assert.equal(view.ownWorld.connectionFootings!.length,1);
+});
+
+test("losing the relay preserves the return footing until landing at home, then removes its physical ground locally",()=>{
+  const r=setup();use(r,"a",author(r,"b"));const gate=open(r,"a","b"),view=meetingView(r,"a");
+  const position={x:gate.x,z:gate.z,yaw:0,grounded:true};
+  assert.equal(retireOfflineMeetingFootings(view,position),view);
+  assert.equal(retireOfflineMeetingFootings(view,{...position,x:32,z:10}),view);
+  const home={...position,...meetingGlobal(0,MEETING_START)};
+  assert.equal(retireOfflineMeetingFootings(view,{...home,grounded:false}),view);
+  assert.equal(retireOfflineMeetingFootings(view,{...home,falling:true}),view);
+  const returned=retireOfflineMeetingFootings(view,home);
+  assert.deepEqual(returned.connections,[]);assert.deepEqual(returned.approaches,[]);
+  assert.deepEqual(returned.ownWorld.connectionFootings,[]);
+  assert.equal(isVoid(returned.world.terrain!.tiles[meetingCell(gate.x,gate.z)]),true);
+  assert.equal(isVoid(returned.world.terrain!.tiles[meetingCell(32,10)]),true);
+  assert.equal(isVoid(returned.world.terrain!.tiles[meetingCell(home.x,home.z)]),false);
+  assert.equal(retireOfflineMeetingFootings(returned,home),returned);
 });
 
 test("old saved footings are discarded on load and cannot reappear as physical ground or stack beside a new neighbor",()=>{

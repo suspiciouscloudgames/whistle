@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { localMeetingView, type MeetingMessage, type MeetingPresence, type MeetingPosition, type MeetingWhistle } from "@/lib/meeting";
+import { localMeetingView, retireOfflineMeetingFootings, type MeetingMessage, type MeetingPresence, type MeetingPosition, type MeetingWhistle } from "@/lib/meeting";
 import { createMeetingCodec } from "@/lib/meeting-wire";
 import type { World } from "@/lib/world";
 import { meetingSocketURL } from "@/lib/meeting-client";
@@ -31,6 +31,8 @@ export function useMeetingRoom(key: string) {
   const [rejected, setRejected] = useState<{world: World; revision: number} | null>(null);
   const [turnClock, setTurnClock] = useState({ server: Date.now(), local: performance.now() });
   const socket = useRef<WebSocket | null>(null);
+  const online = useRef(false);
+  const lastPosition = useRef<MeetingPosition | null>(null);
   const codec = useRef(createMeetingCodec());
   const resetId = useRef(0);
   const nightSky = useRef(false);
@@ -70,6 +72,7 @@ export function useMeetingRoom(key: string) {
           return;
         }
         if (message.type === "whistle") { listeners.current.forEach(listener => listener(message.whistle)); return; }
+        online.current=true;
         setStatus("online"); setPresence(message.presence);
         if (message.presence.meteors) meteorClock.current = {
           timeline: message.presence.meteors.timeline, server: message.presence.meteors.now, local: performance.now(),
@@ -86,6 +89,8 @@ export function useMeetingRoom(key: string) {
       ws.onclose = event => {
         clearTimeout(connecting);
         if (stopped || socket.current !== ws) return;
+        online.current=false;
+        setView(current=>retireOfflineMeetingFootings(current,lastPosition.current??current.reset.player));
         setStatus("offline");
         if (event.code === 4001) setError("다른 창에서 이 세계를 열었습니다.");
         if (event.code !== 1008 && event.code !== 4001 && event.code !== 4002) {
@@ -96,7 +101,7 @@ export function useMeetingRoom(key: string) {
       ws.onerror = () => ws.close();
     };
     connect();
-    return () => { stopped = true; clearTimeout(retry); clearTimeout(connecting); socket.current?.close(); socket.current = null; };
+    return () => { stopped = true; clearTimeout(retry); clearTimeout(connecting); socket.current?.close(); socket.current = null; online.current=false; };
   }, [key,session,enabled]);
   const send = useCallback((message: object) => {
     if (socket.current?.readyState === WebSocket.OPEN) {
@@ -107,6 +112,7 @@ export function useMeetingRoom(key: string) {
   const restart = useCallback((world:World) => {
     send({type:"leave"});
     socket.current?.close();socket.current=null;
+    online.current=false;lastPosition.current=null;
     const next=identity(key,true);
     resetId.current=0;
     setView(localMeetingView(next.id,world));
@@ -119,6 +125,8 @@ export function useMeetingRoom(key: string) {
     setStatus(next ? "connecting" : "offline");
   }, [enabled,restart]);
   const position = useCallback((player: MeetingPosition, playing: boolean) => {
+    lastPosition.current=player;
+    if(!online.current)setView(current=>retireOfflineMeetingFootings(current,player));
     send({ type: "position", player, playing, resetId:resetId.current });
   }, [send]);
   const sky = useCallback((eligible: boolean) => {

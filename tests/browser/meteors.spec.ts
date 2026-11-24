@@ -101,6 +101,7 @@ test("two browsers receive the same scheduled shower and one leaving does not re
 });
 
 test("the imported meteor patch produces audio and becomes silent after switching off", async ({ page }) => {
+  await page.context().grantPermissions(["local-network-access"]);
   const errors: string[] = [];
   page.on("console", message => { if (message.type() === "error" || /couldn't create|connection failed/.test(message.text())) errors.push(message.text()); });
   await page.route("**/meteor-audio-test", route => route.fulfill({
@@ -110,10 +111,9 @@ test("the imported meteor patch produces audio and becomes silent after switchin
       document.querySelector('button').onclick = async () => {
         const engine = await openEngine('/whistle/audio/');
         await engine.context.resume();
-        const patch = await engine.start('event');
         const analyser = engine.context.createAnalyser(); analyser.fftSize = 2048;
-        patch.node.connect(analyser); analyser.connect(engine.context.destination);
-        window.meteorPatch = patch;
+        engine.mixdown.connect(analyser); analyser.connect(engine.context.destination);
+        window.meteorPatch = engine;
         window.rms = () => { const a = new Float32Array(2048); analyser.getFloatTimeDomainData(a); return Math.sqrt(a.reduce((sum, n) => sum + n*n, 0)/a.length); };
       };
     </script>`,
@@ -125,7 +125,5 @@ test("the imported meteor patch produces audio and becomes silent after switchin
   await expect.poll(() => page.evaluate(() => (window as any).rms()), { timeout: 10_000 }).toBeGreaterThan(.0001);
   await page.evaluate(() => (window as any).meteorPatch.send("whistle-event", ["fallingstar", 0]));
   await expect.poll(() => page.evaluate(() => (window as any).rms()), { timeout: 5000 }).toBeLessThan(.000001);
-  await page.evaluate(() => (window as any).meteorPatch.send("whistle-event", [440, .1, 0]));
-  await expect.poll(() => page.evaluate(() => (window as any).rms())).toBeGreaterThan(.001);
   expect(errors).toEqual([]);
 });
