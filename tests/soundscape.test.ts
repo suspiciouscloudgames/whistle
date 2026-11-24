@@ -121,6 +121,45 @@ test("등록만으로는 패치를 로드하지 않는다", () => {
   assert.deepEqual(scape.snapshot(), { sources: 1, voices: [] });
 });
 
+test("unchanged sources do not reschedule audio parameters or postpone fade completion", async () => {
+  const { scape, started, created, clock } = setup(.5);
+  const source = { id: "a", patch: "p", position: { x: 3, y: 1, z: -4 }, gain: .8, width: .5 };
+  scape.set(source); scape.activate("a"); started[0].resolve(); await flush();
+  const parameters = [...created.gains.map(node => node.gain), ...Object.values(created.panners[0]).filter(value => value instanceof FakeParam)] as FakeParam[];
+  const scheduled = parameters.map(param => structuredClone(param.events));
+  for (let i = 1; i <= 8; i++) {
+    clock.currentTime = i * .08;
+    scape.setListener({ ...origin }, { x: 0, y: 0, z: -1 });
+    scape.set({ ...source, position: { ...source.position } });
+  }
+  assert.deepEqual(parameters.map(param => param.events), scheduled);
+  assert.equal(created.gains[1].gain.value, .8);
+  scape.set({ ...source, gain: .4, width: 1, position: { x: 5, y: 1, z: -4 } });
+  clock.currentTime += .5;
+  assert.equal(created.gains[1].gain.value, .4);
+  assert.equal(created.panners[0].positionX.value, 5);
+  assert.equal(created.gains[2].gain.value, 0);
+  assert.equal(created.gains[3].gain.value, 1);
+});
+
+test("mutating a reused listener position still moves active sources", async () => {
+  const { scape, started, created, clock } = setup();
+  const position = { x: 1, y: 0, z: 0 }, forward = { x: 0, y: 0, z: -1 };
+  scape.setListener(position, forward);
+  scape.set({ id: "a", patch: "p", position: { x: 4, y: 0, z: 0 } });
+  scape.activate("a"); started[0].resolve(); await flush();
+  assert.equal(created.panners[0].positionX.value, 3);
+  position.x = 2;
+  scape.setListener(position, forward);
+  clock.currentTime += .2;
+  assert.equal(created.panners[0].positionX.value, 2);
+  forward.x = 1; forward.z = 0;
+  scape.setListener(position, forward);
+  clock.currentTime += .2;
+  assert.equal(created.panners[0].positionX.value, 0);
+  assert.equal(created.panners[0].positionZ.value, -2);
+});
+
 test("activate: 패치 → 게인 → 패너 → 점 게인 → 마스터(+ 가운데 게인 → 마스터)로 연결하고 위치를 적용한 뒤 fade in", async () => {
   const { scape, started, created, clock } = setup(0.5);
   scape.set({ id: "a", patch: "terrain_clock", position: { x: 3, y: 1, z: -4 } });

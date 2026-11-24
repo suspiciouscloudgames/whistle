@@ -6,7 +6,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attachMeetingRelay } from "../../scripts/meeting/relay";
-import type { MeetingMessage, MeetingView } from "../../lib/meeting";
+import { createMeetingWorld, type MeetingMessage, type MeetingView } from "../../lib/meeting";
 import { createMeetingCodec } from "../../lib/meeting-wire";
 
 test.setTimeout(600_000);
@@ -28,9 +28,9 @@ test("multiplayer is the default and toggles participation without losing the wo
   await expect(a.locator(".presence-number")).toHaveText("1");
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed","false");
-  await expect(toggle).toHaveAttribute("title","혼자 플레이");
-  await expect(a.locator(".presence-number")).toHaveCount(0);
-  await expect(a.locator(".presence-mark")).toHaveCSS("background-color","rgb(243, 239, 145)");
+  await expect(toggle).toHaveAttribute("aria-description","혼자 플레이");
+  await expect(a.locator(".presence-number")).toHaveText("1");
+  await expect(a.locator(".presence-mark")).toHaveCSS("background-color","rgb(17, 17, 17)");
   expect(await a.locator(".presence-mark").evaluate(mark=>getComputedStyle(mark,"::after").content)).toBe('""');
   await makeText(a,"혼자 만든 재료");await publishMaterials(a);
   const original=await savedWorld(a);
@@ -59,10 +59,11 @@ test("multiplayer is the default and toggles participation without losing the wo
   expect(before.assets.find(asset=>asset.text==="혼자 만든 재료")).toEqual(original.assets.find(asset=>asset.text==="혼자 만든 재료"));
   await toggle.focus();await a.keyboard.press("Space");
   await expect(toggle).toHaveAttribute("aria-pressed","false");
-  await expect(a.locator(".presence-number")).toHaveCount(0);
+  await expect(a.locator(".presence-number")).toHaveText("1");
   await expect(a.locator('[data-connection-online="true"], [data-approach-online="true"]')).toHaveCount(0);
   await expect(b.locator(".presence-number")).toHaveText("1");
-  expect(await savedWorld(a)).toEqual(before);
+  await expect.poll(async()=>(await savedWorld(a)).connectionFootings??[]).toEqual([]);
+  expect({...await savedWorld(a),connectionFootings:[]}).toEqual({...before,connectionFootings:[]});
   await makeText(b,"혼자 모드에서는 받지 않음");await publishMaterials(b);
   await expect(a.getByRole("button",{name:"배치: 혼자 모드에서는 받지 않음",exact:true})).toHaveCount(0);
   expect(sockets).toBe(2);
@@ -70,7 +71,7 @@ test("multiplayer is the default and toggles participation without losing the wo
   await toggle.click();await ready(a);
   await expect(a.locator(".presence-number")).toHaveText("2");
   await expect.poll(()=>state.view().ownWorld.assets.some(asset=>asset.text==="혼자 추가한 재료")).toBe(true);
-  expect((await savedWorld(a)).connectionFootings).toEqual(expect.arrayContaining(before.connectionFootings!));
+  await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.length).toBe(1);
   await expect(a.getByRole("button",{name:"배치: 혼자 모드에서는 받지 않음",exact:true})).toBeVisible();
   await a.reload();
   await expect(toggle).toHaveAttribute("aria-pressed","true");
@@ -90,8 +91,8 @@ test("switching to solo cancels pending connection retries",async({page})=>{
   await toggle.click();
   await page.waitForTimeout(1500);
   expect(attempts).toBe(1);
-  await expect(toggle).toHaveAttribute("title","혼자 플레이");
-  await expect(page.locator(".presence-mark")).toHaveCSS("background-color","rgb(243, 239, 145)");
+  await expect(toggle).toHaveAttribute("aria-description","혼자 플레이");
+  await expect(page.locator(".presence-mark")).toHaveCSS("background-color","rgb(17, 17, 17)");
   await toggle.click();
   await expect.poll(()=>attempts).toBe(2);
 });
@@ -104,7 +105,7 @@ test("an unavailable relay keeps the editor usable and recovers when the server 
     else socket.connectToServer();
   });
   await page.goto(`?meeting=retry-${Date.now()}`);
-  await expect(page.getByRole("button",{name:"텍스트 만들기",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"장면 제목 입력",exact:true})).toBeVisible();
   await ready(page);
   expect(attempts).toBe(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
@@ -176,7 +177,7 @@ test("browser storage restores my world and edited gifts after both the browser 
     await expect.poll(()=>state.view().ownWorld.assets.some(a=>a.text==="내가 바꾼 재료"&&a.received)).toBe(true);
     expect(state.view().ownWorld).toEqual(saved);
     await expect(reopened.locator(".received-material")).toHaveCount(1);
-    await expect(reopened.locator(".meeting-material-count")).toHaveText("1 / 6");
+    await expect(reopened.locator(".meeting-material-count")).toHaveCount(0);
     expect(state.errors).toEqual([]);
   } finally {
     await peer.close();await local.close();await stop();await rm(profile,{recursive:true,force:true});
@@ -316,7 +317,7 @@ test("distant personal footings reveal worlds and return visitors silently after
   await expect(a.getByRole("button",{name:"시작점",exact:true})).toHaveCount(0);
   await expect(a.locator('[data-approach]')).toHaveCount(1);
   await expect(a.locator('.presence-mark')).toHaveCSS("background-color","rgb(243, 239, 145)");
-  await expect(a.locator('.presence-count>span:nth-child(2)')).toHaveCSS("background-color","rgb(243, 239, 145)");
+  await expect(a.locator('.presence-number')).toHaveCSS("background-color","rgba(0, 0, 0, 0)");
   await makeText(a,"A의 재료");await makeText(b,"B의 재료");await publishMaterials(a);await publishMaterials(b);await useText(a,"B의 재료");
   await expect.poll(()=>aa.view().connections.length).toBe(1);
   const gate=aa.view().connections[0];expect(gate.x).toBe(25);expect(gate.z).toBeLessThanOrEqual(4);
@@ -374,49 +375,51 @@ test("three original editors retain tools, undo, distinct documents after reload
   expect(bb.view().ownWorld.terrain!.tiles.filter(t=>!t.void)).toHaveLength(14);
   await a.screenshot({path:info.outputPath("continuous-grass.png")});
   await c.goto(`?meeting=separate-${Date.now()}`);await ready(c);
-  await expect(c.locator(".presence-count")).toHaveAttribute("title","접속 인원 (나 포함): 1");
-  await expect(a.locator(".presence-count")).toHaveAttribute("title","접속 인원 (나 포함): 2");
+  await expect(c.locator(".presence-count")).toHaveAttribute("aria-description","접속 인원 (나 포함): 1");
+  await expect(a.locator(".presence-count")).toHaveAttribute("aria-description","접속 인원 (나 포함): 2");
   await a.setViewportSize({width:390,height:844});
   await a.screenshot({path:info.outputPath("mobile.png"),fullPage:true});
   expect(await a.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
   expect([...aa.errors,...bb.errors,...cc.errors]).toEqual([]);
 });
 
-test("black footings survive a new neighbor, undo, reload and an empty relay; restart clears them",async({browser,baseURL})=>{
+test("old black footings stay removed through reload, undo, new neighbors and switching to solo",async({browser,baseURL})=>{
   const a=await newPlayer(browser,baseURL),b=await newPlayer(browser,baseURL),state=observe(a);
   const url=`?meeting=footing-history-${Date.now()}`;
-  await a.goto(url);await ready(a);await b.goto(url);await ready(b);
-  await makeText(b,"이웃의 기호");await publishMaterials(b);await useText(a,"이웃의 기호");
-  await expect(a.locator('[data-connection]')).toHaveCount(1);
-  const gate=state.view().connections[0];
-  await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.find(p=>p.id===gate.id)?.built).toBe(true);
-  await b.bringToFront();
-  await b.getByRole("button",{name:"다시 시작",exact:true}).click();
-  await b.getByRole("dialog").getByRole("button",{name:"다시 시작",exact:true}).click();await ready(b);
-  await a.bringToFront();
-  await expect(a.locator(`[data-connection="${gate.id}"]`)).toHaveAttribute("data-connection-online","false");
+  const legacy=createMeetingWorld(17);
+  legacy.connectionFootings=Array.from({length:6},(_,i)=>({id:`old-${i}`,side:i<3?0:1,row:i%3,built:true,created:i}));
+  await a.addInitScript(world=>localStorage.setItem("whistle.world.v2",JSON.stringify(world)),legacy);
+  await a.setViewportSize({width:390,height:844});
+  await a.goto(url);await ready(a);
+  await expect(a.locator('[data-connection], [data-approach]')).toHaveCount(0);
+  await expect.poll(async()=>(await savedWorld(a)).connectionFootings??[]).toEqual([]);
+  await a.getByRole("button",{name:"장면 제목 입력",exact:true}).click();
+  await a.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("발판 없이 남는 장면");
+  await a.getByRole("button",{name:"저장",exact:true}).click();
+  await b.goto(url);await ready(b);
   await expect(a.locator('[data-approach-online="true"]')).toHaveCount(1);
   const next=state.view().approaches.find(p=>p.online)!;
-  expect([next.x,next.z]).not.toEqual([gate.x,gate.z]);
   await a.getByRole("button",{name:"바닥",exact:true}).click();await a.locator('[data-cell="0"]').click();
   await a.getByRole("button",{name:"되돌리기",exact:true}).click();
-  await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.length).toBe(2);
+  await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.map(p=>p.id)).toEqual([next.id]);
+  for(let i=0;i<3;i++){
+    await a.reload();await ready(a);
+    await expect(a.locator('[data-connection]')).toHaveCount(0);
+    await expect(a.locator('[data-approach-online="true"]')).toHaveCount(1);
+    await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.length).toBe(1);
+  }
+  await a.getByRole("button",{name:"멀티플레이",exact:true}).click();
+  await expect(a.locator('[data-connection], [data-approach]')).toHaveCount(0);
+  await expect.poll(async()=>(await savedWorld(a)).connectionFootings??[]).toEqual([]);
   await a.reload();await ready(a);
-  await expect(a.locator(`[data-connection="${gate.id}"]`)).toHaveAttribute("data-connection-online","false");
-  await expect(a.locator(`[data-approach="${next.id}"]`)).toHaveAttribute("data-approach-online","true");
+  await expect(a.locator('[data-connection]')).toHaveCount(0);
+  await expect(a.locator('[data-approach-online="true"]')).toHaveCount(1);
   await b.close();const context=a.context();await a.close();
   const reopened=await context.newPage();await reopened.goto(url);await ready(reopened);
-  await expect(reopened.locator(`[data-connection="${gate.id}"]`)).toHaveAttribute("data-connection-online","false");
-  await expect(reopened.locator(`[data-approach="${next.id}"]`)).toHaveAttribute("data-approach-online","false");
-  expect((await savedWorld(reopened)).connectionFootings).toHaveLength(2);
-  await reopened.getByRole("button",{name:"다시 시작",exact:true}).click();
-  await reopened.getByRole("dialog").getByRole("button",{name:"다시 시작",exact:true}).click();await ready(reopened);
   await expect(reopened.locator('[data-connection], [data-approach]')).toHaveCount(0);
-  const fresh=await savedWorld(reopened);
-  expect(fresh.connectionFootings??[]).toEqual([]);expect(fresh.objects).toEqual([]);
-  expect(fresh.assets.some(asset=>asset.received)).toBe(false);
-  expect(fresh.terrain!.tiles.filter(tile=>!tile.void)).toHaveLength(14);
-  await expect(reopened.getByRole("button",{name:"되돌리기",exact:true})).toBeDisabled();
+  await expect.poll(async()=>(await savedWorld(reopened)).connectionFootings??[]).toEqual([]);
+  await expect(reopened.getByRole("button",{name:"배치: 발판 없이 남는 장면",exact:true})).toBeVisible();
+  expect(state.errors).toEqual([]);
 });
 
 test("solo starts and restarts with detached terrain before anyone sends a symbol",async({page},info)=>{
@@ -424,7 +427,7 @@ test("solo starts and restarts with detached terrain before anyone sends a symbo
   await page.goto(`?meeting=solo-${Date.now()}`);await ready(page);
   await expect(page.locator("[data-cell]")).toHaveCount(144);
   await expect(page.locator(".tile-empty")).toHaveCount(130);
-  await expect(page.locator(".presence-count")).toHaveAttribute("title","접속 인원 (나 포함): 1");
+  await expect(page.locator(".presence-count")).toHaveAttribute("aria-description","접속 인원 (나 포함): 1");
   expect(room.view().signals).toHaveLength(0);
   expect(room.view().world.terrain!.tiles.filter(t=>!t.void)).toHaveLength(14);
   const terrain=JSON.stringify(room.view().ownWorld.terrain);
@@ -493,7 +496,7 @@ test("neighbors share editable lemon materials without forwarding copies or rest
   await expect(b.locator('.meeting-material-count')).toHaveText("1 / 6");
   await expect(c.locator('.received-material')).toHaveCount(1);
   await a.close();
-  await expect(c.locator('.presence-count')).toHaveAttribute("title","접속 인원 (나 포함): 2");
+  await expect(c.locator('.presence-count')).toHaveAttribute("aria-description","접속 인원 (나 포함): 2");
   await c.reload();await ready(c);
   await expect(c.locator('.received-material')).toHaveCount(1);
   await c.setViewportSize({width:390,height:844});
@@ -514,7 +517,7 @@ test("a fourth arrival preserves existing neighbors and only receives the adjace
   const ids=states.map(s=>s.view().id);
   for(let i=0;i<4;i++){
     expect(states[i].view().recipients).toEqual([ids[i-1],ids[i+1]].filter(Boolean));
-    await expect(pages[i].locator('.presence-count')).toHaveAttribute('title','접속 인원 (나 포함): 4');
+    await expect(pages[i].locator('.presence-count')).toHaveAttribute('aria-description','접속 인원 (나 포함): 4');
   }
   await useText(pages[1],"첫 번째");await expect.poll(()=>states[1].view().connections.length).toBe(1);
   await pages[0].close();await expect(pages[1].locator('[data-connection]')).toHaveCSS('background-color','rgb(17, 17, 17)');

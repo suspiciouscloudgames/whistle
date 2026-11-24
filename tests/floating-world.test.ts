@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createTerrainWorld } from "../lib/create-world.ts";
+import { createMeetingRoom, addMeetingMember, meetingWorld } from "../lib/meeting.ts";
 import { validateWorld } from "../lib/world.ts";
 import { deriveStructures, floorHeight, terrainSample, flatTerrain } from "../lib/terrain.ts";
 import { grassCoverAt } from "../components/whistle/Grass.ts";
@@ -56,6 +57,34 @@ test("edges block walking, jumping, diagonal shortcuts and long steps, while add
   assert.equal(blocksVoidStep(world, from, diagonal), true);
   assert.equal(blocksVoidStep(world, { x: from.x, z: world.start.z + .4 }, { x: from.x, z: world.start.z + .45 }), true);
   assert.equal(blocksVoidStep(world, from, far, [{ kind: "bridge", ...to, height: 0, dx: 0, dz: 1, key: "test" }]), false);
+});
+
+test("walking and jumping stop at the rounded corner in solo and shared worlds", () => {
+  const room = createMeetingRoom(13);
+  addMeetingMember(room, "first");
+  addMeetingMember(room, "second");
+  for (const world of [createTerrainWorld(5), meetingWorld(room, "first")]) {
+    const { x, z } = world.start;
+    const inside = { x: x + .35, z: z + .35 };
+    const outside = { x: x + .36, z: z + .36 };
+    assert.notEqual(floorHeight(world, inside.x, inside.z, []), null);
+    assert.equal(floorHeight(world, outside.x, outside.z, []), null);
+    assert.equal(blocksWalkingStep(world, world.start, inside, []), false);
+    assert.equal(blocksWalkingStep(world, inside, outside, []), true);
+    assert.equal(blocksVoidStep(world, inside, outside), true);
+  }
+});
+
+test("a hole rim cannot remove the floor from an adjacent ordinary tile", () => {
+  const world = createTerrainWorld(5);
+  world.terrain = flatTerrain(world.size);
+  for (let seed = 0; seed < 16; seed++) {
+    world.terrain.seed = seed;
+    world.terrain.tiles[5 * world.size + 5].hole = true;
+    for (const [x,z] of [[4.49,5], [5.51,5], [5,4.49], [5,5.51]])
+      assert.notEqual(floorHeight(world, x, z, []), null);
+    assert.equal(floorHeight(world, 5, 5, []), null);
+  }
 });
 
 test("void is preserved in saves, excluded from environmental effects, and cannot be the start", () => {

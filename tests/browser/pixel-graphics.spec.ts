@@ -41,7 +41,7 @@ test("forest and water keep a limited grayscale palette through resize, night an
     expect(frame.shades.length).toBeLessThanOrEqual(256);
     expect(frame.shades.every(color => (color >> 16) === ((color >> 8) & 255) && (color >> 16) === (color & 255))).toBe(true);
     expect(frame.lit).toBeGreaterThan(0);
-    const ratio=await page.evaluate(()=>Math.min(devicePixelRatio,2));
+    const ratio=await page.evaluate(()=>Math.min(devicePixelRatio,1));
     expect(frame.width).toBe(Math.floor(frame.displayWidth*ratio));
   };
   await check();
@@ -51,7 +51,7 @@ test("forest and water keep a limited grayscale palette through resize, night an
   await page.locator(".daylight-indicator").click();
   await page.getByRole("button", { name: "한밤중", exact: true }).click();
   await check();
-  await page.getByRole("button", { name: "들어가기", exact: true }).click();
+  await page.getByRole("button", { name: "플레이", exact: true }).click();
   await page.locator(".play-shell canvas").waitFor();
   await check();
   await page.locator(".play-shell canvas").screenshot({ path: testInfo.outputPath("pixel-play.png") });
@@ -82,7 +82,7 @@ test.describe("native resolution text", () => {
       localStorage.setItem("whistle.world.v2",JSON.stringify(world));
       localStorage.setItem("whistle.language","ko");
     },world);
-    await page.goto(".");
+    await page.goto("?quality=high");
     await expect.poll(async()=> (await pixels(page)).shades.some(color=>(color>>16)>100 && (color>>16)-(color&255)>40)).toBe(true);
     const frame=await pixels(page);
     expect(frame.width).toBe(frame.displayWidth*2);

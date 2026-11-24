@@ -52,11 +52,13 @@ export function waterLevelAt(
   ground?: number,
 ) {
   const cx = Math.max(0, Math.min(size - 1, x)), cz = Math.max(0, Math.min(size - 1, z));
+  const weights = waterWeights(size, ground === undefined ? x : cx, ground === undefined ? z : cz, level, hole);
   if (ground !== undefined) {
-    for (const [h, w] of waterWeights(size, cx, cz, level, hole))
+    for (const [h, w] of weights)
       if (h > 0 && w > .02 && ground < h - .002 && !hole?.(Math.round(cz) * size + Math.round(cx))) return h;
   }
-  for (const [h, w] of waterWeights(size, x, z, level, hole)) if (w * (ground === undefined ? 1 : waterSupport(ground, h + WATER_INSET)) > 0.8) return h;
+  const surface = ground !== undefined && (cx !== x || cz !== z) ? waterWeights(size, x, z, level, hole) : weights;
+  for (const [h, w] of surface) if (w * (ground === undefined ? 1 : waterSupport(ground, h + WATER_INSET)) > 0.8) return h;
   return null;
 }
 

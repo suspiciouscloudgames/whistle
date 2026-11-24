@@ -149,6 +149,7 @@ export function useGameAudio(notify: (message: string) => void) {
         lastFrame.current = frame;
         controller.current?.movement(playerSound(frame));
         if (!enabled.current || paused.current || !world) return;
+        controller.current?.meteor(!!frame.meteors);
         soundscape.current?.frame(frame, {
           size: world.size,
           tiles: tilesOf(world),

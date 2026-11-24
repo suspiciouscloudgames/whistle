@@ -71,12 +71,16 @@ type Voice = {
   releaseAt?: number;
 };
 
+const parameterTargets = new WeakMap<AudioParam, number>();
+
 /** 현재 값을 고정하고 target까지 직선으로 바꾼다. Firefox에는 cancelAndHoldAtTime이 없다. */
 function ramp(param: AudioParam, target: number, now: number, duration: number) {
+  if (parameterTargets.get(param) === target) return;
   const current = param.value;
   param.cancelScheduledValues(now);
   param.setValueAtTime(current, now);
   param.linearRampToValueAtTime(target, now + duration);
+  parameterTargets.set(param, target);
 }
 
 // Firefox는 AudioListener의 position*/forward*/up* AudioParam을 지원하지 않고
@@ -117,6 +121,7 @@ function placePanner(panner: PannerNode, { x, y, z }: Vec3, now: number, immedia
       if (immediate) {
         param.cancelScheduledValues(now);
         param.setValueAtTime(value, now);
+        parameterTargets.set(param, value);
       } else {
         ramp(param, value, now, POSITION_GLIDE);
       }
@@ -197,8 +202,10 @@ export function createSoundscape(options: SoundscapeOptions) {
     const now = context.currentTime;
     for (const [node, value] of targets) {
       if (!node) continue;
+      if (!immediate && parameterTargets.get(node.gain) === value) continue;
       if (immediate) node.gain.value = value;
       else node.gain.setTargetAtTime(value, now, MIX_SMOOTHING);
+      parameterTargets.set(node.gain, value);
     }
   };
 
@@ -368,8 +375,10 @@ export function createSoundscape(options: SoundscapeOptions) {
     diffuse: () => diffuse,
     /** 리스너(플레이어 귀) 위치와 바라보는 방향. forward는 정규화하지 않아도 된다. */
     setListener(position: Vec3, forward: Vec3) {
-      listenerPosition = position;
-      listenerForward = forward;
+      if (position.x === listenerPosition.x && position.y === listenerPosition.y && position.z === listenerPosition.z &&
+          forward.x === listenerForward.x && forward.y === listenerForward.y && forward.z === listenerForward.z) return;
+      listenerPosition = { ...position };
+      listenerForward = { ...forward };
       for (const voice of voices.values()) if (voice.panner) setPosition(voice.panner, voice.source.position);
     },
     /** fade-out이 끝난 소스의 노드를 정리한다. 자동으로도 불리므로 선택 사항. */

@@ -1,5 +1,5 @@
 import type { World } from "./world.ts";
-import { floorHeight, ladderAt, tileAt, type Structure } from "./terrain.ts";
+import { bridgeAt, floatingCoverage, floorHeight, ladderAt, tileAt, type Structure } from "./terrain.ts";
 import { groundTileHeight, isGap, isVoid } from "./tile.ts";
 
 export function blocksVoidStep(world: Pick<World, "size" | "terrain">, from: { x: number; z: number }, to: { x: number; z: number }, structures: Structure[] = []) {
@@ -7,10 +7,10 @@ export function blocksVoidStep(world: Pick<World, "size" | "terrain">, from: { x
   const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.z - from.z) / .08));
   for (let i = 1; i <= steps; i++) {
     const x = from.x + (to.x - from.x) * i / steps, z = from.z + (to.z - from.z) * i / steps;
+    if (floatingCoverage(world, x, z) < .5 && !bridgeAt(structures, x, z)) return true;
     for (const dx of [-.08, .08]) for (const dz of [-.08, .08]) {
       const tile = tileAt(world, x + dx, z + dz);
-      const bridge = structures.some(s => s.kind === "bridge" && Math.abs(s.x - x - dx) <= .5 && Math.abs(s.z - z - dz) <= .5);
-      if (!bridge && (!tile || isVoid(tile))) return true;
+      if ((!tile || isVoid(tile)) && !bridgeAt(structures, x + dx, z + dz)) return true;
     }
   }
   return false;

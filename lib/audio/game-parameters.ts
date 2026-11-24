@@ -8,6 +8,7 @@ export type PlayerAudioFrame = {
   grass: number; rough: number; water: number;
   grounded: boolean; falling: boolean; yaw: number;
   crouch?: boolean; run?: boolean;
+  meteors?: boolean;
 };
 
 export function playerSound(frame: PlayerAudioFrame): PlayerSound {

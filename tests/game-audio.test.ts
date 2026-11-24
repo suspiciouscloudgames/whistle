@@ -17,10 +17,10 @@ test("board height accepts metres within the test range and rejects invalid meas
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function session() {
-  const edits: unknown[] = [], moves: PlayerSound[] = [], gates: boolean[] = [], events: unknown[] = [];
+  const edits: unknown[] = [], moves: PlayerSound[] = [], gates: boolean[] = [], events: unknown[] = [], meteors: boolean[] = [];
   let closed = 0, stops = 0, suspends = 0, resumes = 0;
   return {
-    edits, moves, gates, events, get closed() { return closed; }, get stops() { return stops; },
+    edits, moves, gates, events, meteors, get closed() { return closed; }, get stops() { return stops; },
     get suspends() { return suspends; }, get resumes() { return resumes; },
     value: {
       context: { resume: async () => { resumes++; }, suspend: async () => { suspends++; } } as unknown as AudioContext,
@@ -28,9 +28,10 @@ function session() {
       player: (value: PlayerSound) => moves.push(value),
       stopPlayer: () => { stops++; },
       event: (...values: number[]) => events.push(values),
+      meteor: (value: boolean) => meteors.push(value),
       mute: (value: boolean) => gates.push(value),
       close: async () => { closed++; },
-    } as Pick<InteractionSession, "context" | "edit" | "player" | "stopPlayer" | "event" | "mute" | "close">,
+    } as Pick<InteractionSession, "context" | "edit" | "player" | "stopPlayer" | "event" | "meteor" | "mute" | "close">,
   };
 }
 const sound = { x: 0.5, z: 0.5, overlap: 0 };
@@ -159,4 +160,30 @@ test("player state goes to Pd as four route-able messages", () => {
     "whistle-player stat 1 0 1 0",
     "whistle-player footed 0.4 1",
   ]);
+});
+
+test("meteor sound follows the latest state, sends only changes, and stops on pause and exit", async () => {
+  const stub = session();
+  let finish!: (value: typeof stub.value) => void;
+  const audio = createGameAudio(() => new Promise(resolve => { finish = resolve; }), error => assert.fail(String(error)));
+  audio.play(); audio.meteor(true); audio.meteor(false);
+  finish(stub.value); await tick();
+  assert.deepEqual(stub.meteors, [false]);
+  for (let i = 0; i < 60; i++) audio.meteor(true);
+  assert.deepEqual(stub.meteors, [false, true]);
+  audio.pause(); audio.meteor(true);
+  assert.equal(stub.meteors.at(-1), false);
+  audio.resume(); await tick(); audio.meteor(true);
+  assert.equal(stub.meteors.at(-1), true);
+  audio.stop();
+  assert.equal(stub.meteors.at(-1), false);
+  audio.dispose();
+});
+
+test("meteor controls and existing numeric rule events use separate Pd routes", () => {
+  const sent: unknown[] = [];
+  const sender = { send: (bus: string, message: unknown) => sent.push([bus, message]) };
+  const messages = interactionMessages({edit:sender,player:sender,event:sender});
+  messages.meteor(true); messages.meteor(false); messages.event(440, .1, 0);
+  assert.deepEqual(sent, [["whistle-event", ["fallingstar", 1]], ["whistle-event", ["fallingstar", 0]], ["whistle-event", [440, .1, 0]]]);
 });

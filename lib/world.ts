@@ -29,6 +29,7 @@ export type Asset = {
   color: string;
   glyphColor?: string;
   received?: boolean;
+  prompt?: { kind: "image" | "text" | "sound"; title?: boolean };
   image?: string;
   originalImage?: string;
   sound?: Recording;
@@ -83,6 +84,12 @@ export type World = {
   weather?: Weather;
   timeOfDay?: TimeOfDay;
   terrain?: Terrain;
+  workshop?: {
+    id: string;
+    serial: number;
+    next: number;
+    pending: { kind: "image" | "text" | "sound"; x: number; z: number; title?: boolean }[];
+  };
 };
 export type Actor = Placed & { marks: string[]; removed: boolean };
 export type Event = {
@@ -483,6 +490,14 @@ export function validateWorld(input: unknown, libraryLimit = MAX_CONTENT_COUNT):
   )
     throw Error("지원하지 않는 파일 형식입니다.");
   const ids = new Set<string>();
+  if (w.workshop !== undefined) {
+    const s = w.workshop;
+    if (!s || !text(s.id, 40) || !/^[a-zA-Z0-9-]+$/.test(s.id) || !Number.isSafeInteger(s.serial) || !number(s.serial, 0, 1000000) ||
+        !Number.isInteger(s.next) || !number(s.next, 0, 2) || !Array.isArray(s.pending) || s.pending.length > 6 ||
+        s.pending.some(p => !p || !["image", "text", "sound"].includes(p.kind) ||
+          !Number.isInteger(p.x) || !Number.isInteger(p.z) || !number(p.x, 0, w.size - 1) || !number(p.z, 0, w.size - 1) ||
+          (p.title !== undefined && typeof p.title !== "boolean"))) throw Error("기호 데이터가 올바르지 않습니다.");
+  }
   if (w.connectionFootings !== undefined) {
     const footings = w.connectionFootings;
     if (!Array.isArray(footings) || footings.length > w.size * 2 || footings.some(p =>
@@ -502,6 +517,8 @@ export function validateWorld(input: unknown, libraryLimit = MAX_CONTENT_COUNT):
       !/^#[0-9a-f]{6}$/i.test(a.color) ||
       (a.glyphColor !== undefined && !/^#[0-9a-f]{6}$/i.test(a.glyphColor)) ||
       (a.received !== undefined && typeof a.received !== "boolean") ||
+      (a.prompt !== undefined && (!a.prompt || !["image", "text", "sound"].includes(a.prompt.kind) ||
+        (a.prompt.title !== undefined && (typeof a.prompt.title !== "boolean" || a.prompt.kind !== "text")))) ||
       typeof a.solid !== "boolean" ||
       (a.sound !== undefined && (!validRecording(a.sound) || a.solid || a.image !== undefined || a.text !== undefined)) ||
       (a.placement !== undefined && !["upright", "floating", "surface", "field"].includes(a.placement)) ||

@@ -5,7 +5,8 @@ export function makeWaterReflection() {
   const plane = new THREE.PlaneGeometry(1, 1);
   const mirror = new Reflector(plane, { textureWidth: 256, textureHeight: 256, multisample: 0, clipBias: .003 });
   mirror.rotation.x = -Math.PI / 2;
-  const matrix = new THREE.Matrix4(), frustum = new THREE.Frustum(), sphere = new THREE.Sphere();
+  const matrix = new THREE.Matrix4(), reflectionMatrix = new THREE.Matrix4(), inverseMirror = new THREE.Matrix4();
+  const frustum = new THREE.Frustum(), sphere = new THREE.Sphere();
   let lastTime = -Infinity, lastLevel: number | null = null;
   let lastTerrain: THREE.Group | null = null;
   let waters: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>[] = [];
@@ -21,10 +22,10 @@ export function makeWaterReflection() {
       }
       if (!waters.length) return;
       camera.updateMatrixWorld();
-      terrain.updateMatrixWorld(true);
       frustum.setFromProjectionMatrix(matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
       let selected: typeof waters[number] | undefined, nearest = Infinity;
       for (const water of waters) {
+        water.updateWorldMatrix(true, false);
         water.material.uniforms.hasReflection.value = 0;
         if (!water.geometry.boundingSphere) water.geometry.computeBoundingSphere();
         sphere.copy(water.geometry.boundingSphere!).applyMatrix4(water.matrixWorld);
@@ -53,12 +54,12 @@ export function makeWaterReflection() {
         }
         lastTime = time;
         lastLevel = level;
+        const textureMatrix = (mirror.material as THREE.ShaderMaterial).uniforms.textureMatrix.value as THREE.Matrix4;
+        reflectionMatrix.copy(textureMatrix).multiply(inverseMirror.copy(mirror.matrixWorld).invert());
       }
-      const textureMatrix = (mirror.material as THREE.ShaderMaterial).uniforms.textureMatrix.value as THREE.Matrix4;
-      matrix.copy(textureMatrix).multiply(mirror.matrixWorld.clone().invert());
       for (const water of waters) if (Math.abs(water.userData.waterLevel - level) < .001) {
         water.material.uniforms.reflectionMap.value = mirror.getRenderTarget().texture;
-        water.material.uniforms.reflectionMatrix.value.copy(matrix);
+        water.material.uniforms.reflectionMatrix.value.copy(reflectionMatrix);
         water.material.uniforms.hasReflection.value = 1;
       }
     },

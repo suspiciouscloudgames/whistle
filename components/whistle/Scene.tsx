@@ -17,11 +17,14 @@ import { renderQuality } from "@/lib/render-quality";
 import { horizonTone } from "./PixelPalette";
 import { addSymbolVisuals, makeSymbolExperience } from "./SymbolExperience";
 import { floorHeight, tileAt, terrainSample, ladderAt, LEVEL, SURFACES } from "@/lib/terrain";
+import { isHole, isVoid } from "@/lib/tile";
 import type { PlayerAudioFrame } from "@/lib/audio/game-parameters";
 import type { WorldDerivation } from "@/lib/world-derivation";
 import { environmentAt } from "@/lib/environment";
 import { environmentalFlight, stepEnvironmentalFlight, type EnvironmentalFlight } from "@/lib/environment-motion";
 import { makeWeather } from "./WeatherScene";
+import { makeMeteors } from "./MeteorScene";
+import { advanceMeteors, createMeteorTimeline, meteorElapsed, meteorSeed, METEOR_DURATION, type MeteorTimeline, type MeteorClock } from "@/lib/meteors";
 import { WEATHER } from "@/lib/weather";
 import { createPortalScene } from "./PortalScene";
 import { createMeetingScene, type MeetingVisuals } from "./MeetingScene";
@@ -68,6 +71,9 @@ type Props = {
   suspended?: boolean;
   onReady?: (success: boolean) => void;
   meeting?: MeetingVisuals;
+  meteorTimeline?: MeteorTimeline;
+  meteorClock?: MutableRefObject<MeteorClock | undefined>;
+  onNightSky?: (eligible: boolean) => void;
 };
 const NO_PORTALS: WorldPortal[] = [];
 const deviceTime = () => new Date();
@@ -154,7 +160,17 @@ export default function Scene({
   suspended = false,
   onReady,
   meeting,
+  meteorTimeline,
+  meteorClock,
+  onNightSky,
 }: Props) {
+  const fallbackMeteors = useRef(createMeteorTimeline());
+  const meteorsRef = useRef({timeline:meteorTimeline ?? fallbackMeteors.current, clock:meteorClock, onNightSky});
+  meteorsRef.current = {timeline:meteorTimeline ?? fallbackMeteors.current, clock:meteorClock, onNightSky};
+  const [meteorDebug, setMeteorDebug] = useState(() => new URLSearchParams(location.search).has("debug"));
+  const debugRef = useRef(meteorDebug);
+  debugRef.current = meteorDebug;
+  const previewMeteor = useRef<() => void>(() => {});
   const meetingRef = useRef(meeting);
   meetingRef.current = meeting;
   const { t } = useLanguage();
@@ -205,6 +221,18 @@ export default function Scene({
     const waterReflection = makeWaterReflection();
     const weatherScene = makeWeather(world.size);
     scene.add(weatherScene.group);
+    const meteorScene = makeMeteors();
+    scene.add(meteorScene.mesh);
+    let previewStarted: number | null = null;
+    let skyEligible: boolean | undefined;
+    const reportSky = (eligible: boolean) => {
+      if (skyEligible === eligible) return;
+      skyEligible = eligible;
+      meteorsRef.current.onNightSky?.(eligible);
+    };
+    previewMeteor.current = () => {
+      previewStarted = previewStarted === null ? performance.now() : null;
+    };
     const weatherSky = new THREE.Color();
     let lastTimeOfDay = worldRef.current.timeOfDay ?? "auto";
     let targetDay = daylightAt(clockRef.current(), lastTimeOfDay);
@@ -366,6 +394,9 @@ export default function Scene({
     let previousActors: typeof actors.current | undefined,
       previousAssets: typeof world.assets | undefined,
       previousTerrain: typeof world.terrain;
+    const placementGround = new WeakMap<THREE.Group, {
+      terrain: THREE.Group; x: number; z: number; siteHeight: number | undefined; height: number; afloat: boolean;
+    }>();
     const fadingMist: {mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>; opacity: number; started: number}[] = [];
     const updateModels = () => {
       if (
@@ -405,12 +436,13 @@ export default function Scene({
         if (!source || (!source.image && !source.text?.trim())) continue;
         const asset = { ...source, ...environmentPresentation(worldRef.current, a, terrain.environment) };
         presentationAssets.set(a.id, asset);
-        const signature = JSON.stringify(asset) + (asset.placement === "surface" || asset.placement === "field"
+        const { image, originalImage, ...metadata } = asset;
+        const signature = JSON.stringify(metadata) + (asset.placement === "surface" || asset.placement === "field"
           ? JSON.stringify([terrainSignature, a.x, a.z, a.scale, a.rotation, treeImages.has(a.id)]) : "");
         let model = models.current.get(a.id);
         if (
           model &&
-          model.userData.signature !== signature
+          (model.userData.signature !== signature || model.userData.image !== image || model.userData.originalImage !== originalImage)
         ) {
           scene.remove(model);
           disposeGroup(model);
@@ -427,14 +459,24 @@ export default function Scene({
           model.userData.environmentPresentation = true;
           model.userData.presentation = { placement: asset.placement ?? "upright", display: asset.display };
           model.userData.signature = signature;
+          model.userData.image = image;
+          model.userData.originalImage = originalImage;
           models.current.set(a.id, model);
           scene.add(model);
         }
         model.visible = !a.removed;
         if (model.userData.surface) continue;
+        let ground = placementGround.get(model);
+        if (!ground || ground.terrain !== terrain.group || ground.x !== a.x || ground.z !== a.z || ground.siteHeight !== a.site?.height) {
+          const base = floorHeight(worldRef.current, a.x, a.z, structures) ?? a.site?.height ?? -0.4;
+          const water = environmentAt(terrain.environment, a.x, a.z).water;
+          ground = { terrain: terrain.group, x: a.x, z: a.z, siteHeight: a.site?.height,
+            height: Math.max(base, water ?? -Infinity), afloat: water !== null && water > base };
+          placementGround.set(model, ground);
+        }
         model.position.set(
           toScene(a.x),
-          Math.max(floorHeight(worldRef.current, a.x, a.z, structures) ?? a.site?.height ?? 0, environmentAt(terrain.environment, a.x, a.z).water ?? -Infinity),
+          ground.height,
           toScene(a.z),
         );
         model.scale.setScalar(a.scale);
@@ -503,6 +545,12 @@ export default function Scene({
             e.target.closest("input, textarea, select")))
       )
         return;
+      if (e.code === "Backquote" && !e.repeat) {
+        e.preventDefault();setMeteorDebug(value => !value);return;
+      }
+      if (debugRef.current && e.code === "Digit1" && !e.repeat) {
+        e.preventDefault();previewMeteor.current();return;
+      }
       if (e.code === "Space" || e.key === " ") {
         e.preventDefault();
         keys.add("jump-held");
@@ -583,8 +631,10 @@ export default function Scene({
       renderer.domElement.addEventListener("pointerup", up);
       renderer.domElement.addEventListener("pointercancel", up);
     }
-    let rendered = false;
+    let rendered = false, inView = true, disposed = false;
     const render = (time: number) => {
+      frame = 0;
+      if (disposed || document.hidden || (!inView && rendered)) return;
       const dt = Math.min((time - last) / 1000, 0.05);
       last = time;
 
@@ -609,6 +659,20 @@ export default function Scene({
         currentDay[key] += (targetDay[key] - currentDay[key]) * blend;
       const weather = worldRef.current.weather ?? "clear";
       graphicsDaylight.value = currentDay.daylight;
+      const eligible = mode === "play" && weather === "clear" && currentDay.daylight <= .05;
+      reportSky(eligible);
+      const shared = meteorsRef.current.clock?.current;
+      const meteorNow = shared ? shared.server + time - shared.local : Date.now();
+      const timeline = meteorsRef.current.timeline;
+      if (shared) Object.assign(timeline, shared.timeline);
+      else advanceMeteors(timeline, eligible, meteorNow);
+      let showerElapsed = eligible ? meteorElapsed(timeline, meteorNow) : null;
+      let showerSeed = meteorSeed(timeline);
+      if (previewStarted !== null) {
+        const elapsed = time - previewStarted;
+        if (!eligible || elapsed >= METEOR_DURATION) previewStarted = null;
+        else { showerElapsed = elapsed / 1000; showerSeed = 7319; }
+      }
       const climate = WEATHER[weather];
       weatherSky.set(climate.sky);
       const skyLight = weatherSky.r * .2126 + weatherSky.g * .7152 + weatherSky.b * .0722;
@@ -679,12 +743,10 @@ export default function Scene({
       for (const a of actors.current) {
         const model = models.current.get(a.id);
         if (!model || a.removed || model.userData.surface) continue;
-        const c = environmentAt(terrain.environment, a.x, a.z);
-        const base =
-          floorHeight(worldRef.current, a.x, a.z, structures) ?? a.site?.height ?? -0.4;
+        const ground = placementGround.get(model)!;
         model.position.y =
-          Math.max(base, c.water ?? -Infinity) +
-          (c.water !== null && c.water > base
+          ground.height +
+          (ground.afloat
             ? Math.sin(time * 0.0012 + a.x) * 0.035
             : 0);
         model.rotation.z = 0;
@@ -857,9 +919,18 @@ export default function Scene({
           }
           audioFeet = feet;
           if (feet === null) {
-            falling = { originY: eyeY, elapsed: 0 };
             clear();
-            callback.current?.({ ...player, pitch, falling: true });
+            const tile = tileAt(worldRef.current, player.x, player.z);
+            if (isHole(tile) && !isVoid(tile)) {
+              falling = { originY: eyeY, elapsed: 0 };
+              callback.current?.({ ...player, pitch, falling: true });
+            } else {
+              const center = { x: Math.round(player.x), z: Math.round(player.z) };
+              const safe = floorHeight(worldRef.current, center.x, center.z, structures) !== null
+                ? center : worldRef.current.start;
+              player.x = safe.x;
+              player.z = safe.z;
+            }
           } else {
             const local = environmentAt(
               terrain.environment,
@@ -884,6 +955,7 @@ export default function Scene({
                 ? terrainSample(worldRef.current, player.x, player.z).weights.rough : 0,
               water: dry ? 0 : 1, grounded: onGround, falling: falling !== null, yaw: player.yaw,
               crouch: !!controls?.current.has("crouch"), run: !!controls?.current.has("run"),
+              meteors: showerElapsed !== null,
             });
             audioReport = time;
           }
@@ -923,6 +995,7 @@ export default function Scene({
       meetingScene.sync(meetingRef.current, worldRef.current, camera, time);
       contentPresentation.update(camera, worldRef.current.size, time, mode === "overview", reducedMotion);
       weatherScene.update(time, worldRef.current.weather ?? "clear", camera, currentDay.daylight, mode === "overview");
+      meteorScene.update(showerElapsed, showerSeed, camera, reducedMotion);
       for(let i=fadingMist.length-1;i>=0;i--) {
         const fog=fadingMist[i],fade=Math.min(1,(time-fog.started)/650);
         fog.mesh.material.opacity=fog.opacity*(1-fade);
@@ -937,9 +1010,29 @@ export default function Scene({
         renderer.domElement.dataset.ready = "true";
         readyRef.current?.(true);
       }
-      frame = requestAnimationFrame(render);
+      if (inView && !document.hidden) frame = requestAnimationFrame(render);
     };
-    frame = requestAnimationFrame(render);
+    const updateVisibility = () => {
+      if (disposed) return;
+      if (document.hidden || (!inView && rendered)) {
+        cancelAnimationFrame(frame);
+        frame = 0;
+        clear();
+        reportSky(false);
+        previewStarted = null;
+        advanceMeteors(meteorsRef.current.timeline, false, Date.now());
+      } else if (!frame) {
+        last = performance.now();
+        frame = requestAnimationFrame(render);
+      }
+    };
+    const visibility = new IntersectionObserver(entries => {
+      inView = entries.some(entry => entry.isIntersecting);
+      updateVisibility();
+    });
+    visibility.observe(el);
+    document.addEventListener("visibilitychange", updateVisibility);
+    updateVisibility();
     const contextLost = (e: Event) => {
       e.preventDefault();
       setFailed(true);
@@ -947,7 +1040,12 @@ export default function Scene({
     };
     renderer.domElement.addEventListener("webglcontextlost", contextLost);
     return () => {
+      disposed = true;
+      reportSky(false);
+      advanceMeteors(meteorsRef.current.timeline, false, Date.now());
       cancelAnimationFrame(frame);
+      visibility.disconnect();
+      document.removeEventListener("visibilitychange", updateVisibility);
       ro.disconnect();
       window.removeEventListener("keydown", keydown);
       window.removeEventListener("keyup", keyup);
@@ -976,6 +1074,11 @@ export default function Scene({
       )}
     >
       <div ref={fallVeil} className="fall-veil" aria-hidden="true" />
+      {mode === "play" && meteorDebug && <div className="meteor-debug">
+        <button type="button" onClick={() => previewMeteor.current()}>
+          {t("유성우 테스트 (1)")}
+        </button>
+      </div>}
       {failed && (
         <div className="scene-error">
           {t("3D 화면을 시작할 수 없습니다.")}

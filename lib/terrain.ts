@@ -1,3 +1,4 @@
+import { emptySymbol } from "./workshop.ts";
 import { groundTileHeight, isGap, isHole, isVoid } from "./tile.ts";
 import type { World, Placed } from "./world.ts";
 import { carveWaterBed } from "./water.ts";
@@ -211,7 +212,7 @@ export function deriveStructures(
         }
       }
   }
-  const active = objects.filter((o) => !o.removed && !world.assets.find(a => a.id === o.asset)?.sound),
+  const active = objects.filter((o) => !o.removed && !world.assets.find(a => a.id === o.asset)?.sound && !emptySymbol(world.assets.find(a => a.id === o.asset))),
     byCell = new Map(active.map((o) => [`${o.x},${o.z}`, o]));
   for (const a of active) {
     const tile = tileAt(world, a.x, a.z);
@@ -312,6 +313,10 @@ export function terrainSample(
     elevation /= coverage;
     for (const surface of SURFACES) weights[surface.id] /= coverage;
   }
+  if (voidAmount > 0 && !isHole(tileAt(world, x, z))) {
+    const distanceFromCenter = Math.max(Math.abs(x - Math.round(x)), Math.abs(z - Math.round(z)));
+    voidAmount = Math.min(voidAmount, distanceFromCenter);
+  }
 
   const variation =
     Math.sin(x * 2.31 + z * 1.17) * Math.sin(z * 3.13 - x * 0.73);
@@ -337,7 +342,7 @@ export function terrainSample(
   };
 }
 
-function floatingCoverage(world: Pick<World, "size" | "terrain">, x: number, z: number) {
+export function floatingCoverage(world: Pick<World, "size" | "terrain">, x: number, z: number) {
   const smooth = (t: number) => t * t * (3 - 2 * t);
   const fx = Math.floor(x), fz = Math.floor(z), tx = smooth(x - fx), tz = smooth(z - fz);
   let support = 0;
@@ -348,6 +353,11 @@ function floatingCoverage(world: Pick<World, "size" | "terrain">, x: number, z: 
   }
   return support;
 }
+
+export function bridgeAt(structures: Structure[], x: number, z: number) {
+  return structures.find(s => s.kind === "bridge" && Math.abs(s.x - x) <= .5 && Math.abs(s.z - z) <= .5);
+}
+
 export function floorHeight(
   world: World,
   x: number,
@@ -366,12 +376,7 @@ export function floorHeight(
     const sample = terrainSample(world, x, z);
     return sample.coverage >= .5 ? sample.height : null;
   }
-  const bridge = structures.find(
-    (s) =>
-      s.kind === "bridge" &&
-      Math.abs(s.x - x) <= 0.5 &&
-      Math.abs(s.z - z) <= 0.5,
-  );
+  const bridge = bridgeAt(structures, x, z);
   if (bridge) return bridge.height * LEVEL;
   const sample = terrainSample(world, x, z);
   return sample.coverage >= 0.5 ? sample.height : null;

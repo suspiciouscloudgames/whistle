@@ -8,6 +8,7 @@ import { createWorldDeriver, samePlacement } from "@/lib/world-derivation";
 import { placementChanges, type PlacementFeedback } from "@/lib/placement-feedback";
 import { withSymbolColors } from "@/lib/symbol-color";
 import { contentKind, MAX_CONTENT_COUNT, mergeReceivedAssets } from "@/lib/content-limits";
+import { refillSymbols } from "@/lib/workshop";
 
 function copyDocument(world: World): World {
   return { ...clone({ ...world, assets: [] }), assets: world.assets.map(asset => ({
@@ -133,6 +134,7 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
           next.objects.push({ id: uid(), asset: asset.id, x, z, rotation: 0, scale: asset.defaultScale ?? 1 });
       }
     }
+    refillSymbols(next);
     if (samePlacement(worldRef.current, next)) {
       if (first) strokeBase.current = null;
       return;
@@ -145,6 +147,16 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
   }, [applyWorld, commit, revealChanges]);
 
   const endStroke = useCallback(() => { strokeBase.current = null; }, []);
+
+  const moveSymbol = useCallback((id: string, index: number) => {
+    const current = worldRef.current, object = current.objects.find(o => o.id === id);
+    const x = index % current.size, z = Math.floor(index / current.size);
+    if (!object || index < 0 || index >= current.size ** 2 || object.x === x && object.z === z ||
+        current.objects.some(o => o.id !== id && o.x === x && o.z === z) ||
+        floorHeight(current, x, z, deriveWorld(current).structures) === null) return false;
+    edit(w => { const next = w.objects.find(o => o.id === id)!; next.x = x; next.z = z; delete next.site; refillSymbols(w); });
+    return true;
+  }, [deriveWorld, edit]);
 
   const receiveAssets = useCallback((assets: Asset[]) => {
     const result = mergeReceivedAssets(worldRef.current,assets);
@@ -173,6 +185,6 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
     world, getWorld, deriveWorld, feedback,
     canUndo: history.current.length > 0,
     canRedo: future.current.length > 0,
-    commit, edit, load, undo, redo, paint, endStroke, receiveAssets, syncConnectionFootings,
+    commit, edit, load, undo, redo, paint, endStroke, moveSymbol, receiveAssets, syncConnectionFootings,
   };
 }

@@ -79,15 +79,16 @@ const shapeNames: Partial<Record<Shape, string>> = {
   ring: "고리",
   bar: "선",
 };
-export function MakerActions({ onSave, disabled, onDelete, deleteLabel }: {
+export function MakerActions({ onSave, disabled, onDelete, deleteLabel, deleteDisabled = false }: {
   onSave: () => void;
   disabled: boolean;
   onDelete?: () => void;
   deleteLabel: string;
+  deleteDisabled?: boolean;
 }) {
   const { t } = useLanguage();
   return <div className="dialog-footer">
-    {onDelete && <button type="button" onClick={onDelete}>{t(deleteLabel)}</button>}
+    {onDelete && <button type="button" disabled={deleteDisabled} onClick={onDelete}>{t(deleteLabel)}</button>}
     <button type="button" className="primary" disabled={disabled} onClick={onSave}>{t("저장")}</button>
   </div>;
 }
@@ -97,6 +98,7 @@ export function AssetMaker({
   onSave,
   onClose,
   onDelete,
+  deleteDisabled,
   placement: editingPlacement = false,
 }: {
   asset?: Asset;
@@ -104,6 +106,7 @@ export function AssetMaker({
   onSave: (a: Asset) => void;
   onClose: () => void;
   onDelete?: () => void;
+  deleteDisabled?: boolean;
   placement?: boolean;
 }) {
   const { t } = useLanguage();
@@ -202,7 +205,7 @@ export function AssetMaker({
           {t(error)}
         </p>
       )}
-      <MakerActions onSave={save} onDelete={onDelete}
+      <MakerActions onSave={save} onDelete={onDelete} deleteDisabled={deleteDisabled}
         deleteLabel={editingPlacement ? "배치 삭제" : mediaType === "image" ? "이미지 삭제" : "텍스트 삭제"}
         disabled={mediaType === "image" ? loading : !text.trim() || text.length > MAX_TEXT_LENGTH} />
     </Dialog>

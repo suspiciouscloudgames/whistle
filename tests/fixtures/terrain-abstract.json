@@ -5,14 +5,14 @@
     "vertices": 45069
   },
   "mixed": {
-    "hash": "d703ab2c8a906d917b5713cfd5be9e9032350a9a2b1ab1f23880a516a61c1742",
+    "hash": "5afab96fdff96b0ef99d5c8922e03585d86f9685379cbcf567073e30e074f91a",
     "meshes": 20,
-    "vertices": 100858
+    "vertices": 100942
   },
   "structures": {
-    "hash": "c626ab64c09d3c76e641940350b5b40ca2145164eed04ff70e56a15b9821b354",
+    "hash": "68682c96e792c26e0d2988e3a2f9bd59e1bb68bf40f79b15f2afafdaa0913ad8",
     "meshes": 21,
-    "vertices": 102562
+    "vertices": 102666
   },
   "large": {
     "hash": "ba3b9cf4070e4fffe76f3d79d04209f9f1a40ccd7eb5e2bbac25973b8384b6be",

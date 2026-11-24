@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actor, World } from "@/lib/world";
 import type { PlacementFeedback } from "@/lib/placement-feedback";
 import type { WorldDerivation } from "@/lib/world-derivation";
@@ -16,6 +16,7 @@ import { SoundGlyph } from "./SoundGlyph";
 import { soundRangeAt } from "@/lib/audio/sound-range";
 import { SiteGlyph } from "./SiteGlyph";
 import { useLanguage } from "./Language";
+import { emptySymbol } from "@/lib/workshop";
 import type { WorldPortal } from "../../lib/portals.ts";
 
 type Props = {
@@ -26,15 +27,19 @@ type Props = {
   canHold: boolean;
   canUndo: boolean;
   canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
   onPaint: (cells: number[], erase: boolean) => void;
   onEnd: () => void;
   placingAsset: string | null;
   placingStart: boolean;
   onOpenSymbol: (index: number, objectId?: string) => void;
-  onUndo: () => void;
-  onRedo: () => void;
   portals?: WorldPortal[];
   overlay?: ReactNode;
+  canPlace?: boolean;
+  onMoveSymbol?: (id: string, index: number) => void;
+  onBlocked?: () => void;
+  turnBar?: ReactNode;
 };
 
 export function EditorBoard({
@@ -42,6 +47,7 @@ export function EditorBoard({
   onPaint, onEnd, placingAsset, placingStart, onOpenSymbol, onUndo, onRedo,
   portals = [],
   overlay,
+  canPlace = true, onMoveSymbol, onBlocked, turnBar,
 }: Props) {
   const { t } = useLanguage();
   const { structures, environment } = derivation;
@@ -66,6 +72,18 @@ export function EditorBoard({
   };
   return (
     <section className="canvas-panel">
+      <div className="canvas-history history-tools">
+        <button aria-label={t("되돌리기")} disabled={!canUndo} onClick={onUndo}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5" />
+          </svg>
+        </button>
+        <button aria-label={t("다시 실행")} disabled={!canRedo} onClick={onRedo}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path transform="translate(24 0) scale(-1 1)" d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5" />
+          </svg>
+        </button>
+      </div>
       <div className="canvas-area">
         <PaintGrid
           size={world.size}
@@ -116,7 +134,7 @@ export function EditorBoard({
               z = Math.floor(i / world.size),
               tile = tileAt(world, x, z)!;
             const cellActors = actors.filter(
-              (a) => a.x === x && a.z === z && !a.removed && world.assets.some(asset => asset.id === a.asset && (asset.image || asset.text?.trim() || asset.sound)),
+              (a) => a.x === x && a.z === z && !a.removed && world.assets.some(asset => asset.id === a.asset && (asset.image || asset.text?.trim() || asset.sound || emptySymbol(asset))),
             );
             const actor = cellActors[0];
             const generated = structures.filter(
@@ -160,14 +178,16 @@ export function EditorBoard({
                 ))}
                 {cellActors.map((placed, layer) => {
                   const asset = world.assets.find(a => a.id === placed.asset)!;
-                  const kind = asset.text !== undefined ? "peak" : "cluster";
+                  const empty = emptySymbol(asset);
+                  const type = asset.sound ? "sound" : asset.text !== undefined ? "text" : asset.prompt?.kind ?? "image";
+                  const kind = type === "text" ? "peak" : "cluster";
                   const offset = (layer - (cellActors.length - 1) / 2) * Math.min(4, 12 / cellActors.length);
-                  return <span key={placed.id} className="generated-site" data-symbol-site={placed.id}
-                    style={{ marginLeft: offset, marginTop: -offset, zIndex: 5 + layer }}
-                    onPointerDown={e => { if (!placingStart && !placingAsset) e.stopPropagation(); }}
-                    onClick={e => { if (!placingStart && !placingAsset) { e.stopPropagation(); onOpenSymbol(i, placed.id); } }}>
-                    {asset.sound ? <SoundGlyph color={asset.glyphColor ?? asset.color} /> : <SiteGlyph kind={kind} filled={!!asset?.image || !!asset?.text?.trim()} color={asset.glyphColor ?? asset.color} />}
-                  </span>;
+                  const color = empty ? "#777777" : asset.glyphColor ?? asset.color;
+                  return <SymbolMarker key={placed.id} id={placed.id} index={i} size={world.size} offset={offset} layer={layer}
+                    empty={empty} kind={type} label={`${t(asset.prompt?.title ? "장면 제목" : type === "text" ? "텍스트" : type === "sound" ? "사운드" : "이미지")} ${t(empty ? "입력" : "편집")}`}
+                    canPlace={canPlace} onOpen={() => onOpenSymbol(i, placed.id)} onMove={onMoveSymbol} onBlocked={onBlocked}>
+                    {type === "sound" ? <SoundGlyph color={color} filled={!empty} /> : <SiteGlyph kind={kind} filled={!empty} color={color} />}
+                  </SymbolMarker>;
                 })}
                 {!!actor?.marks.length && (
                   <span className="cell-mark">{actor.marks[0]}</span>
@@ -187,24 +207,46 @@ export function EditorBoard({
           }}
         />
       </div>
-      <div className="canvas-tools">
-        <div className="history-tools">
-          <button
-            aria-label={t("되돌리기")}
-            disabled={!canUndo}
-            onClick={onUndo}
-          >
-            ↶
-          </button>
-          <button
-            aria-label={t("다시 실행")}
-            disabled={!canRedo}
-            onClick={onRedo}
-          >
-            ↷
-          </button>
-        </div>
-      </div>
+      {turnBar}
     </section>
   );
+}
+
+function SymbolMarker({ id, index, size, offset, layer, empty, kind, label, canPlace, onOpen, onMove, onBlocked, children }: {
+  id: string; index: number; size: number; offset: number; layer: number; empty: boolean; kind: string; label: string;
+  canPlace: boolean; onOpen: () => void; onMove?: (id: string, index: number) => void; onBlocked?: () => void; children: ReactNode;
+}) {
+  const gesture = useRef<{x:number;y:number;moved:boolean;blocked:boolean} | null>(null);
+  const [dragging, setDragging] = useState(false);
+  return <span className={`generated-site symbol-marker${empty ? " empty-symbol" : ""}${dragging ? " symbol-dragging" : ""}`}
+    role="button" tabIndex={0} aria-label={label} data-symbol-site={id} data-symbol-kind={kind} data-empty-symbol={empty}
+    style={{marginLeft:offset,marginTop:-offset,zIndex:5+layer}}
+    onPointerDown={e => {
+      e.stopPropagation(); if(e.button!==0)return;
+      gesture.current={x:e.clientX,y:e.clientY,moved:false,blocked:false}; e.currentTarget.setPointerCapture(e.pointerId);
+    }}
+    onPointerMove={e => {
+      e.stopPropagation(); const g=gesture.current; if(!g || Math.hypot(e.clientX-g.x,e.clientY-g.y)<7)return;
+      g.moved=true;
+      if(!canPlace){if(!g.blocked)onBlocked?.();g.blocked=true;return;}
+      setDragging(true);
+    }}
+    onPointerUp={e => {
+      e.stopPropagation(); const g=gesture.current; gesture.current=null;setDragging(false);if(!g)return;
+      if(!g.moved){onOpen();return;}
+      if(!canPlace){if(!g.blocked)onBlocked?.();return;}
+      const rect=e.currentTarget.closest(".world-grid")!.getBoundingClientRect();
+      const x=Math.floor((e.clientX-rect.left)/rect.width*size),z=Math.floor((e.clientY-rect.top)/rect.height*size);
+      if(x>=0&&z>=0&&x<size&&z<size)onMove?.(id,z*size+x);
+    }}
+    onPointerCancel={e=>{e.stopPropagation();gesture.current=null;setDragging(false);}}
+    onLostPointerCapture={()=>{gesture.current=null;setDragging(false);}}
+    onClick={e=>{e.stopPropagation();if(e.detail===0)onOpen();}}
+    onKeyDown={e=>{
+      if(e.key==="Enter"||e.key===" "){e.preventDefault();e.stopPropagation();onOpen();}
+      const delta:Record<string,number>={ArrowLeft:-1,ArrowRight:1,ArrowUp:-size,ArrowDown:size};
+      if(e.altKey&&e.key in delta){e.preventDefault();e.stopPropagation();if(!canPlace){onBlocked?.();return;}
+        if(e.key==="ArrowLeft"&&index%size===0||e.key==="ArrowRight"&&index%size===size-1)return;
+        onMove?.(id,index+delta[e.key]);}
+    }}>{children}</span>;
 }

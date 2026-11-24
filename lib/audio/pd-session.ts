@@ -56,6 +56,7 @@ export function interactionMessages(patches: { edit: Sender; player: Sender; eve
     event(frequency: number, gain: number, pan: number) {
       patches.event.send("whistle-event", [bounded(frequency, 20, 20000), bounded(gain, 0, 0.12), bounded(pan, -1, 1)]);
     },
+    meteor(on: boolean) { patches.event.send("whistle-event", ["fallingstar", Number(on)]); },
   };
 }
 

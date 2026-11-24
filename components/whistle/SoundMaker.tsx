@@ -7,8 +7,9 @@ import { readRecording, type Recording } from "@/lib/audio/recording";
 
 const timeLabel = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 
-export function SoundMaker({ asset, defaultName, onSave, onClose, onDelete, placement = false }: {
+export function SoundMaker({ asset, defaultName, onSave, onClose, onDelete, deleteDisabled, placement = false }: {
   asset?: Asset; defaultName: string; onSave: (asset: Asset) => void; onClose: () => void; onDelete?: () => void; placement?: boolean;
+  deleteDisabled?: boolean;
 }) {
   const { t } = useLanguage();
   const [name, setName] = useState((asset?.name || defaultName).slice(0, 12));
@@ -109,7 +110,7 @@ export function SoundMaker({ asset, defaultName, onSave, onClose, onDelete, plac
         <output>{Math.round(volume * 100)}%</output>
       </label>
     </div>
-    <MakerActions onDelete={onDelete} deleteLabel={placement ? "배치 삭제" : "사운드 삭제"}
+    <MakerActions onDelete={onDelete} deleteDisabled={deleteDisabled} deleteLabel={placement ? "배치 삭제" : "사운드 삭제"}
       disabled={!clip || busy} onSave={() => {
         if (!clip) return;
         try {

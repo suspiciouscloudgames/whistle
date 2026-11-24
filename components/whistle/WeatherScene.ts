@@ -37,14 +37,21 @@ export function makeWeather(size: number) {
     const seconds=time*.001;
     const cx=overview?0:camera.position.x, cz=overview?0:camera.position.z;
     const radius=overview?size+3:14;
-    seeds.forEach((p,i)=>{
-      const snowy=weather==="snow";
+    const snowy=weather==="snow";
+    for (let i=0; i<count; i++) {
+      const p=seeds[i];
       const x=cx+wrap(p.x+seconds*(snowy?.2:.8)-cx,radius*2)-radius;
       const z=cz+wrap(p.z+(snowy?Math.sin(seconds*.7+p.phase)*.3:0)-cz,radius*2)-radius;
       const y=wrap(p.y-seconds*(snowy?.7:10),18)-1;
-      if(snowy) snowPositions.set([x,y,z],i*3);
-      else rainPositions.set([x,y,z,x-.035,y+.4,z],i*6);
-    });
+      if(snowy) {
+        const offset=i*3;
+        snowPositions[offset]=x; snowPositions[offset+1]=y; snowPositions[offset+2]=z;
+      } else {
+        const offset=i*6;
+        rainPositions[offset]=x; rainPositions[offset+1]=y; rainPositions[offset+2]=z;
+        rainPositions[offset+3]=x-.035; rainPositions[offset+4]=y+.4; rainPositions[offset+5]=z;
+      }
+    }
     (weather==="snow"?snowGeometry:rainGeometry).getAttribute("position").needsUpdate=true;
   }};
 }

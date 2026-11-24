@@ -6,7 +6,7 @@ import { WebSocket } from "ws";
 import * as THREE from "three";
 import { attachMeetingRelay } from "../scripts/meeting/relay.ts";
 import { createMeetingRoom, addMeetingMember, publishMeeting, meetingView, meetingWorld, moveMeeting, meetingVisibleMembers,
-  MEETING_SIZE, connectionCells, type MeetingMessage } from "../lib/meeting.ts";
+  MEETING_SIZE, connectionCells, advanceMeetingTurns, meetingTurn, TURN_DURATION, type MeetingMessage } from "../lib/meeting.ts";
 import { createMeetingCodec } from "../lib/meeting-wire.ts";
 import { floorHeight } from "../lib/terrain.ts";
 import { deriveEnvironment } from "../lib/environment.ts";
@@ -15,8 +15,9 @@ import { disposeTerrain } from "./terrain-fixtures.ts";
 
 const move=(room:ReturnType<typeof createMeetingRoom>,id:string,x:number,z:number)=>moveMeeting(room,id,{x,z,yaw:0,grounded:true},true);
 const setup=()=>{const room=createMeetingRoom(13);for(const id of ["a","b","c"])addMeetingMember(room,id);return room;};
+const finishTurn=(room:ReturnType<typeof createMeetingRoom>,id:string)=>{const turn=meetingTurn(room,id)!;advanceMeetingTurns(room,turn.endsAt+(turn.owner===id?0:TURN_DURATION));};
 
-test("four neighbors open only their direct worlds and every crossing has continuous support",()=>{
+test("four players open only their paired worlds and every crossing has continuous support",()=>{
   const room=setup();addMeetingMember(room,"d");
   for(const id of room.chain) {
     const world=structuredClone(room.members.get(id)!.document);
@@ -24,30 +25,34 @@ test("four neighbors open only their direct worlds and every crossing has contin
     world.assets.push({...world.assets[0],id:`original-${id}`,text:id});
     world.objects.push({id:`placed-${id}`,asset:`original-${id}`,x:6,z:10,rotation:0,scale:1});publishMeeting(room,id,world,[],true);
   }
+  for(const id of room.chain)finishTurn(room,id);
   for(const id of room.chain) {
     const world=structuredClone(room.members.get(id)!.document),gifts=[...room.members.get(id)!.materials.values()];
     world.assets.push(...gifts);world.objects=gifts.map((a,i)=>({id:`use-${i}`,asset:a.id,x:6,z:10,rotation:0,scale:1}));
     publishMeeting(room,id,world,gifts.map(a=>a.id));
     for(const gate of meetingView(room,id).connections)move(room,id,gate.x,gate.z);
   }
-  assert.equal(room.connections.length,6);assert.equal(room.links.length,6);
+  assert.equal(room.connections.length,4);assert.equal(room.links.length,4);
   for(const id of room.chain) {
     const view=meetingView(room,id);assert.ok(view.joined.length<=3);
     for(const gate of view.connections) for(let i=-10;i<=10;i++)
       assert.notEqual(floorHeight(view.world,gate.x+i/10,gate.z,[]),null);
   }
   assert.deepEqual(meetingView(room,"a").joined,["a","b"]);
-  assert.deepEqual(meetingView(room,"b").joined,["b","a","c"]);
+  assert.deepEqual(meetingView(room,"b").joined,["b","a"]);
+  assert.deepEqual(meetingView(room,"c").joined,["c","d"]);
 });
 
 test("more than twenty received materials remain editable, excess delivery waits and resumes after deletion",()=>{
   const room=setup(),base=structuredClone(room.members.get("a")!.document);
   let recipient=structuredClone(room.members.get("b")!.document);
+  publishMeeting(room,"a",base);publishMeeting(room,"b",recipient);
   const received:string[]=[];
   for(let i=0;i<260;i++) {
     const own=structuredClone(base);own.assets.push({...base.assets[0],id:`original-${i}`,text:`gift ${i}`});
     own.objects.push({id:`placed-${i}`,asset:`original-${i}`,x:6,z:10,rotation:0,scale:1});
     publishMeeting(room,"a",own,[],true);
+    finishTurn(room,"a");
     const view=meetingView(room,"b");
     const fresh=view.materials.filter(a=>!received.includes(a.id));
     received.push(...fresh.map(a=>a.id));recipient.assets.push(...fresh);
@@ -94,6 +99,7 @@ test("chunked terrain keeps water, hole and border geometry after edits and reus
 });
 
 test("relay reclaims overlapping sessions and forgets worlds after idle eviction and restart",async t=>{
+  let now=Date.now();t.mock.method(Date,"now",()=>now);
   const clients:WebSocket[]=[];
   const start=async()=>{
     const server=createServer(),relay=attachMeetingRelay(server,{cleanupMs:10});
@@ -109,14 +115,18 @@ test("relay reclaims overlapping sessions and forgets worlds after idle eviction
     const wait=async(predicate:(message:MeetingMessage)=>boolean)=>{
       for(let i=0;i<400;i++){const index=messages.findIndex(predicate);if(index>=0)return messages.splice(index,1)[0];await new Promise(r=>setTimeout(r,5));}throw Error("Missing relay state");
     };
-    await once(ws,"open");const initial=await wait(m=>m.type==="state");assert.equal(initial.type,"state");
-    return {ws,wait,initial,send:(message:object)=>{for(const frame of codec.encode(message))ws.send(frame);}};
+    const send=(message:object)=>{for(const frame of codec.encode(message))ws.send(frame);};
+    await once(ws,"open");let initial=await wait(m=>m.type==="state");assert.equal(initial.type,"state");
+    if(!initial.view.documentReady){send({type:"publish",world:initial.view.ownWorld});initial=await wait(m=>m.type==="state"&&m.view.documentReady);assert.equal(initial.type,"state");}
+    return {ws,wait,initial,send};
   };
   const a=await connect("aaaaaaaa"),b=await connect("bbbbbbbb");await connect("cccccccc");
   const own=structuredClone(a.initial.view.ownWorld);own.assets.push({...own.assets[0],id:"saved",text:"persistent gift"});
   own.terrain!.tiles[9*12+6]={height:1,surface:"plain"};
   own.objects.push({id:"placed",asset:"saved",x:6,z:10,rotation:0,scale:1});
   a.send({type:"publish",world:own,share:true});
+  await a.wait(m=>m.type==="state"&&m.view.ownWorld.assets.some(a=>a.id==="saved"));
+  now+=TURN_DURATION;
   const gift=await b.wait(m=>m.type==="state"&&m.view.materials.length===1);assert.equal(gift.type,"state");
   const recipient=structuredClone(gift.view.ownWorld);recipient.assets.push({...gift.view.materials[0],text:"recipient edit"});
   b.send({type:"publish",world:recipient,received:[gift.view.materials[0].id]});
@@ -136,7 +146,9 @@ test("relay reclaims overlapping sessions and forgets worlds after idle eviction
   assert.equal(restarted.initial.view.received.length,0);
   restarted.send({type:"publish",world:recipient});
   const recovered=await restarted.wait(m=>m.type==="state"&&m.view.ownWorld.assets.some(a=>a.text==="recipient edit"));
-  assert.equal(recovered.type,"state");assert.deepEqual(recovered.view.ownWorld,recipient);
+  assert.equal(recovered.type,"state");
+  assert.deepEqual({...recovered.view.ownWorld,connectionFootings:[]},{...recipient,connectionFootings:[]});
+  assert.deepEqual(recovered.view.ownWorld.connectionFootings??[],[]);
   const next=await connect("dddddddd");assert.equal(next.initial.view.materials.length,0);
   assert.equal(restarted.initial.view.slot,0);
 });

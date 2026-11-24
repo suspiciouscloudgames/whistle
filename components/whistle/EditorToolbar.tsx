@@ -5,7 +5,7 @@ import { useLanguage } from "./Language";
 type Props = {
   playing: boolean;
   saveStatus: string;
-  onlineCount: number | null;
+  onlineCount: number;
   multiplayerEnabled: boolean;
   onToggleMultiplayer: () => void;
   connectionStatus: "connecting" | "online" | "offline";
@@ -21,18 +21,23 @@ export function EditorToolbar({
   playing, saveStatus, onlineCount, multiplayerEnabled, onToggleMultiplayer, connectionStatus, makeButton, onEnter, onExit, onNew, onImport, onSave,
 }: Props) {
   const { language, setLanguage, t } = useLanguage();
-  const presenceLabel = !multiplayerEnabled ? t("혼자 플레이") : onlineCount === null
+  const count = multiplayerEnabled ? onlineCount : 1;
+  const countLabel = `${t("접속 인원 (나 포함)")}: ${count}`;
+  const connected = multiplayerEnabled && connectionStatus === "online";
+  const presenceLabel = !multiplayerEnabled ? t("혼자 플레이") : !connected
     ? t(connectionStatus === "connecting" ? "연결 중" : "연결 끊김")
-    : `${t("접속 인원 (나 포함)")}: ${onlineCount}`;
+    : countLabel;
   return (
     <header className="topbar" hidden={playing}>
       <div className="brand-lockup">
         <h1>Whistle</h1>
-        <button type="button" className="presence-count" aria-label={t("멀티플레이")}
-          aria-pressed={multiplayerEnabled} aria-description={presenceLabel} title={presenceLabel} onClick={onToggleMultiplayer}>
-          <span className="presence-mark" aria-hidden="true" />
-          {multiplayerEnabled && <span className="presence-number" aria-hidden="true">{onlineCount ?? "—"}</span>}
-        </button>
+        <div className="presence-indicator">
+          <button type="button" className="presence-count" aria-label={t("멀티플레이")}
+            aria-pressed={multiplayerEnabled} aria-description={presenceLabel} data-connected={connected} onClick={onToggleMultiplayer}>
+            <span className="presence-mark" aria-hidden="true" />
+          </button>
+          <span className="presence-number" aria-label={countLabel}>{count}</span>
+        </div>
       </div>
       <nav className="view-tabs" aria-label={t("화면")}>
         <button

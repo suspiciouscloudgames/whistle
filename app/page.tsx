@@ -12,6 +12,8 @@ import {
   type Event,
   type Simulation,
 } from "@/lib/world";
+import { emptySymbol, initializeWorkshop, completeSymbol, refillSymbols, TURN_HINT } from "@/lib/workshop";
+import { TurnBar, useWorkshopTurn } from "@/components/whistle/TurnBar";
 import type { TerrainTool } from "@/lib/tile";
 import { downloadWorld } from "@/lib/sharing";
 import { useWorldDocument } from "@/components/whistle/useWorldDocument";
@@ -28,7 +30,8 @@ import { EditorBoard } from "@/components/whistle/EditorBoard";
 import { PlayControls } from "@/components/whistle/PlayControls";
 import type { MeetingSession } from "@/components/whistle/ConnectedWorld";
 import { MeetingOverlay, meetingVisuals } from "@/components/whistle/MeetingTools";
-import { createMeetingWorld, fixMeetingStart, withLocalMeetingWorld, withLocalMeetingFootings, meetingGlobal, meetingLocal, meetingOwner, meetingReturnPosition, authoredMaterialCount, MEETING_MATERIAL_LIMIT, MEETING_MATERIAL_MESSAGE } from "@/lib/meeting";
+import { createMeetingWorld, fixMeetingStart, withLocalMeetingWorld, meetingGlobal, meetingLocal, meetingOwner, meetingReturnPosition, authoredMaterialCount, MEETING_MATERIAL_LIMIT, MEETING_MATERIAL_MESSAGE } from "@/lib/meeting";
+import { createMeteorTimeline } from "@/lib/meteors";
 import { useMeetingWhistle } from "@/components/whistle/useMeetingWhistle";
 import { portalWorld } from "@/lib/portal-protocol";
 import {
@@ -45,10 +48,10 @@ function Scene(props: ComponentProps<typeof LazyScene>) {
 }
 export default function Home({meeting}:{meeting:MeetingSession}) {
   const { t } = useLanguage();
-  const initialWorld = useMemo(() => meeting.view.ownWorld, []);
+  const initialWorld = useMemo(() => initializeWorkshop(structuredClone(meeting.view.ownWorld)), []);
+  const turn = useWorkshopTurn(meeting);
   const initialPlayer = useMemo(() => ({...meetingGlobal(0,initialWorld.start),yaw:0}), []);
   const receivedMaterials = useRef(new Set(meeting.view.received ?? []));
-  const sharedWorld = useRef<World | null>(null);
   const browserStorage = useMemo(() => browserWorldStore(meeting.key,meeting.documentId),[meeting.key,meeting.documentId]);
   const [selected, setSelected] = useState<string | null>(null),
     [placingAsset, setPlacingAsset] = useState<string | null>(null),
@@ -80,6 +83,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     };
   }, [playing]);
   const [movementMode, setMovementMode] = useState<"walk" | "crouch">("walk");
+  const [meteorTimeline] = useState(() => createMeteorTimeline());
   const [spawn, setSpawn] = useState<Player>(initialPlayer);
   const [surface, setSurface] = useState<Surface>("soft"),
     [terrainTool, setTerrainTool] = useState<TerrainTool>("surface");
@@ -120,13 +124,21 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   const {
     world, getWorld, deriveWorld, feedback, canUndo, canRedo,
     commit: updateWorld, edit: change, load: loadDocument,
-    undo: undoDocument, redo: redoDocument, paint: paintDocument, endStroke, receiveAssets, syncConnectionFootings,
+    undo: undoDocument, redo: redoDocument, paint: paintDocument, endStroke, moveSymbol: moveDocumentSymbol, receiveAssets, syncConnectionFootings,
   } = useWorldDocument(initialWorld, resetSimulation);
+  useEffect(() => { if (!turn.canPlace) endStroke(); }, [turn.canPlace, endStroke]);
+  useEffect(() => {
+    if (!meeting.rejected) return;
+    const incoming = structuredClone(meeting.rejected.world);
+    const current = getWorld();
+    incoming.assets = incoming.assets.map(a => ({...a, originalImage:current.assets.find(b => b.id === a.id && b.image === a.image)?.originalImage}));
+    loadDocument(incoming, incoming);
+    notify(TURN_HINT);
+  }, [meeting.rejected, getWorld, loadDocument, notify]);
   const sharedIds = useMemo(() => new Set([
     ...(meeting.view.materials.map(a => a.id) ?? []),...world.assets.filter(a=>a.received).map(a=>a.id),
   ]), [meeting.view.materials,world.assets]);
   const ownActors = simulation.actors;
-  const visibleMeeting=useMemo(()=>({...meeting,view:withLocalMeetingFootings(meeting.view,world)}),[meeting,world]);
   const derivation = useMemo(
     () => deriveWorld(world, ownActors),
     [deriveWorld, world, ownActors],
@@ -158,59 +170,53 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   const symbols = world.assets.filter(asset => asset.image || asset.text?.trim() || asset.sound);
   const nextSoundName = String(Math.max(0, ...world.assets.filter(a => a.sound && /^[1-9]\d{0,5}$/.test(a.name)).map(a => Number(a.name))) + 1);
   const activeAsset = symbols.find(asset => asset.id === placingAsset)?.id ?? null;
-  const createSymbol = (type: "image" | "text" | "sound") => {
-    if (world.assets.length >= MAX_LIBRARY_SIZE) { notify("재료 목록이 가득 찼습니다. 사용하지 않는 재료를 삭제해 주세요."); return; }
-    if (authoredMaterialCount(world, sharedIds) >= MEETING_MATERIAL_LIMIT) {
-      notify(MEETING_MATERIAL_MESSAGE); return;
-    }
-    setPlacingStart(false); setSelected(null); setEditingAsset(undefined);
-    setContentType(type); setShowMaker(true);
-  };
   const editSymbol = (asset: Asset, objectId: string | null = null) => {
     setPlacingStart(false); setSelected(objectId);
     setEditingAsset({ ...asset });
-    setContentType(asset.sound ? "sound" : asset.text !== undefined ? "text" : "image");
+    setContentType(asset.sound ? "sound" : asset.text !== undefined ? "text" : asset.prompt?.kind ?? "image");
     setShowMaker(true);
   };
   const openSymbolAt = (i: number, objectId?: string) => {
     const object = world.objects.filter(object => object.x === i % world.size && object.z === Math.floor(i / world.size) && (!objectId || object.id === objectId)).at(-1);
     const asset = world.assets.find(asset => asset.id === object?.asset);
-    if (object && asset && (asset.image || asset.text?.trim() || asset.sound)) editSymbol(asset, object.id);
+    if (object && asset && (asset.image || asset.text?.trim() || asset.sound || emptySymbol(asset))) editSymbol(asset, object.id);
   };
   const handleLoad = useCallback((incoming: World, beforeUpgrade: World) => {
     audio.stop();
     if(incoming.size===12){fixMeetingStart(incoming);fixMeetingStart(beforeUpgrade);}
+    incoming.connectionFootings=[];beforeUpgrade.connectionFootings=[];
     receivedMaterials.current=new Set([...(incoming.receivedMaterialIds??[]),...incoming.assets.filter(a=>a.received).map(a=>a.id)]);
+    initializeWorkshop(incoming);
     loadDocument(incoming, beforeUpgrade);
     setSelected(null); setPlacingAsset(null); setShowMaker(false);
     setPlaying(false);
   }, [audio, loadDocument]);
   const handleImport = useCallback((imported: World) => {
+    if (!turn.canPlace) { notify(TURN_HINT); return; }
     if(imported.size!==12){notify("12×12 맵을 사용합니다.");return;}
     if (authoredMaterialCount(imported, sharedIds) > MEETING_MATERIAL_LIMIT) { notify(MEETING_MATERIAL_MESSAGE); return; }
+    imported.connectionFootings=[];
     receivedMaterials.current=new Set([...(imported.receivedMaterialIds??[]),...imported.assets.filter(a=>a.received).map(a=>a.id)]);
-    updateWorld(fixMeetingStart(imported));
+    updateWorld(initializeWorkshop(fixMeetingStart(imported)));
     setSelected(null); setPlacingAsset(null); setShowMaker(false);
-  }, [updateWorld, notify, sharedIds]);
+  }, [updateWorld, notify, sharedIds, turn.canPlace]);
   const { ready, loading, saveStatus, resumeAutosave, importFile: loadFile } = useWorldPersistence({
     world, onLoad: handleLoad, onImport: handleImport, notify, libraryLimit: MAX_LIBRARY_SIZE,
     storage:browserStorage,fallbackWorld:initialWorld,
   });
   useLiveWorldPublisher(world,ready);
   useEffect(()=>{
-    if(ready&&meeting.status==="online"&&meeting.view.documentReady)
-      syncConnectionFootings(meeting.view.ownWorld.connectionFootings);
-  },[ready,meeting.status,meeting.view.documentReady,meeting.view.ownWorld.connectionFootings,syncConnectionFootings]);
-  useEffect(() => {
     if(!ready)return;
+    if(!meeting.enabled)syncConnectionFootings([]);
+    else if(meeting.status==="online"&&meeting.view.documentReady)
+      syncConnectionFootings(meeting.view.ownWorld.connectionFootings);
+  },[ready,meeting.enabled,meeting.status,meeting.view.documentReady,meeting.view.ownWorld.connectionFootings,syncConnectionFootings]);
+  useEffect(() => {
+    if(!ready || !meeting.enabled || meeting.status!=="online" || !meeting.view.recipients.length)return;
     const incoming = meeting.view.materials.filter(a => !receivedMaterials.current.has(a.id)) ?? [];
     if (!incoming.length) return;
     for (const asset of receiveAssets(incoming)) receivedMaterials.current.add(asset.id);
-  }, [meeting.view.materials, receiveAssets, ready]);
-  useEffect(() => {
-    if(!ready || meeting.status!=="online" || !sharedWorld.current)return;
-    meeting.send({type:"publish",world:portalWorld({...sharedWorld.current,connectionFootings:getWorld().connectionFootings}),share:true,received:[...receivedMaterials.current]});
-  },[ready,meeting.status,meeting.send,getWorld]);
+  }, [meeting.view.materials, meeting.view.recipients.length, meeting.enabled, meeting.status, receiveAssets, ready]);
   useEffect(() => {
     if(!ready || meeting.status!=="online")return;
     const send=()=>meeting.send({type:"publish",world:portalWorld(getWorld()),received:[...receivedMaterials.current]});
@@ -218,16 +224,23 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     window.addEventListener("pagehide",send);
     return()=>{clearTimeout(timer);window.removeEventListener("pagehide",send);};
   },[world,ready,meeting.send,meeting.status,getWorld]);
+  const blocked = () => notify(TURN_HINT);
+  const canPlaceNow = () => {
+    const current = meeting.enabled ? meeting.presence.turn : undefined;
+    return !current || meeting.status === "online" && current.owner === meeting.view.id &&
+      meeting.turnClock.server + performance.now() - meeting.turnClock.local < current.endsAt;
+  };
   const undo = () => {
+    if (!canPlaceNow()) { blocked(); return; }
     if (undoDocument()) setSelected(null);
   };
   const redo = () => {
+    if (!canPlaceNow()) { blocked(); return; }
     if (redoDocument()) setSelected(null);
   };
   const enter = () => {
     setPlayState(null);
-    sharedWorld.current=getWorld();
-    meeting.send({type:"publish",world:portalWorld(sharedWorld.current),share:true,received:[...receivedMaterials.current]});
+    meeting.send({type:"publish",world:portalWorld(getWorld()),received:[...receivedMaterials.current]});
     const p=player.current;
     const next=floorHeight(activeWorld,p.x,p.z,deriveWorld(activeWorld).structures)!==null?{...p,falling:false}:{...activeWorld.start,yaw:0};
     setSpawn(next);player.current=next;audio.play();setPlaying(true);setPlayKey(k=>k+1);
@@ -253,6 +266,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     [],
   );
   const paint = (cells: number[], erase: boolean) => {
+    if (!canPlaceNow()) { endStroke(); blocked(); return; }
     const before = getWorld();
     const kind = contentKind(before.assets.find(a => a.id === activeAsset));
     if (!erase && kind) {
@@ -269,7 +283,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   };
   const saveAsset = (asset: Asset) => {
     if (!world.assets.some(a=>a.id===asset.id) && world.assets.length >= MAX_LIBRARY_SIZE) { notify("재료 목록이 가득 찼습니다. 사용하지 않는 재료를 삭제해 주세요."); return; }
-    if (!world.assets.some(a => a.id === asset.id) && authoredMaterialCount(world, sharedIds) >= MEETING_MATERIAL_LIMIT) {
+    if ((!world.assets.some(a => a.id === asset.id) || emptySymbol(world.assets.find(a => a.id === asset.id))) && authoredMaterialCount(world, sharedIds) >= MEETING_MATERIAL_LIMIT) {
       notify(MEETING_MATERIAL_MESSAGE); return;
     }
     if ((!asset.image && !asset.sound) || (contentType === "text" && !asset.text?.trim())) return;
@@ -277,17 +291,20 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
       asset = { ...asset, name: asset.name.trim().slice(0, 12) || nextSoundName };
     }
     change(w => {
+      const previous = w.assets.find(a => a.id === asset.id);
       const index = w.assets.findIndex(a => a.id === asset.id);
-      if (index >= 0) w.assets[index] = { ...asset, glyphColor: w.assets[index].glyphColor, ...(w.assets[index].received?{received:true}:{}) };
+      if (index >= 0) w.assets[index] = { ...asset, glyphColor: w.assets[index].glyphColor, prompt: previous?.prompt, ...(w.assets[index].received?{received:true}:{}) };
       else w.assets.push({ ...asset, glyphColor: undefined });
       const object = w.objects.find(o => o.id === selected);
       if (object) { object.asset = asset.id; object.scale = asset.defaultScale ?? 1; }
       else if (editingAsset) {
         for (const placed of w.objects) if (placed.asset === asset.id) placed.scale = asset.defaultScale ?? 1;
       }
+      if (previous) completeSymbol(w, previous, selected ?? undefined);
       validateContentCounts(w, MAX_LIBRARY_SIZE);
     });
-    setShowMaker(false); setEditingAsset(undefined); setSelected(null); setPlacingAsset(asset.id);
+    if (meeting.status === "online") meeting.send({type:"publish",world:portalWorld(getWorld()),received:[...receivedMaterials.current]});
+    setShowMaker(false); setEditingAsset(undefined); setSelected(null); setPlacingAsset(null);
   };
   const saveFile = () => {
     try { downloadWorld(world); }
@@ -295,6 +312,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   };
   const deleteSymbol = () => {
     if (!editingAsset) return;
+    if (!canPlaceNow()) { blocked(); return; }
     change(w => {
       if (selected) w.objects = w.objects.filter(o => o.id !== selected);
       else {
@@ -302,6 +320,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
         w.assets = w.assets.filter(a => a.id !== editingAsset.id);
         w.rules = w.rules.filter(r => ![r.subject, r.source, r.replacement].includes(editingAsset.id));
       }
+      refillSymbols(w);
     });
     setShowMaker(false); setEditingAsset(undefined); setSelected(null); setPlacingAsset(null);
   };
@@ -315,7 +334,6 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   };
   const newWorld = () => {
     const next = createMeetingWorld();
-    sharedWorld.current=null;
     receivedMaterials.current.clear();
     loadDocument(next,next);
     player.current={...meetingGlobal(0,next.start),yaw:0};setSpawn(player.current);
@@ -327,12 +345,12 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   };
   if(loading)return <SceneLoading />;
   return (
-    <main className={`studio ${playing ? "playing" : ""}`}
+    <main className={`studio ${playing ? "playing" : ""}${turn.canPlace ? "" : " placement-waiting"}`}
       data-meeting-id={meeting.view.id} data-meeting-slot={meeting.view.slot} data-meeting-status={meeting.status} data-meeting-joined={meeting.view.joined.length}>
       <EditorToolbar
         playing={playing}
         saveStatus={saveStatus}
-        onlineCount={meeting.status==="online" ? meeting.presence.onlineCount ?? meeting.presence.peers.filter(p=>p.online).length : null}
+        onlineCount={meeting.presence.onlineCount ?? Math.max(1,meeting.presence.peers.filter(p=>p.online).length)}
         multiplayerEnabled={meeting.enabled}
         onToggleMultiplayer={() => meeting.setMultiplayer(!meeting.enabled,getWorld())}
         connectionStatus={meeting.status}
@@ -353,11 +371,14 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             mode="play"
             onPlayer={(p) => {player.current = p;meeting.position({...p,grounded:!!p.grounded},true);}}
             onAudioFrame={frame => audio.movement(frame, activeWorld, activeSimulation.actors, activeDerivation)}
+            meteorTimeline={meteorTimeline}
+            meteorClock={meeting.status === "online" ? meeting.meteorClock : undefined}
+            onNightSky={meeting.sky}
             controls={controls}
             stick={stick}
             onControlsReset={() => setMovementMode("walk")}
             initialPlayer={spawn}
-            meeting={meetingVisuals(visibleMeeting)}
+            meeting={meetingVisuals(meeting)}
           />
           <button className="play-return" aria-label={t("만들기로 돌아가기")} onClick={exit}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle className="return-outline" cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="8" /></svg>
@@ -385,15 +406,14 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             weather={world.weather} timeOfDay={world.timeOfDay} surface={surface} terrainTool={terrainTool} placingStart={placingStart}
             symbols={symbols} selectedSymbol={activeAsset ?? undefined}
             sharedSymbolIds={sharedIds}
-            materialCount={authoredMaterialCount(world, sharedIds)}
-            materialLimit={MEETING_MATERIAL_LIMIT}
             startLocked
             extraTools={meeting.view.pendingMaterials > 0 ? <small role="status">보관 공간이 부족해 재료 {meeting.view.pendingMaterials}개가 대기 중입니다.</small> : undefined}
             onSelectSurface={next => { setPlacingStart(false); setPlacingAsset(null); setSurface(next); setTerrainTool("surface"); }}
             onSelectTerrainTool={next => { setPlacingStart(false); setPlacingAsset(null); setTerrainTool(next); }}
             onTimeOfDayChange={timeOfDay => change(w => { w.timeOfDay = timeOfDay; })}
             onWeatherChange={weather => change(w => { w.weather = weather; })}
-            onCreateSymbol={createSymbol}
+            canPlace={turn.canPlace}
+            onBlocked={blocked}
             onSelectSymbol={id => { setPlacingStart(false); setPlacingAsset(activeAsset === id ? null : id); }}
             onEditSymbol={id => { const asset = world.assets.find(asset => asset.id === id); if (asset) editSymbol(asset); }}
             onToggleStart={() => { setPlacingAsset(null); setPlacingStart(!placingStart); }}
@@ -407,13 +427,20 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             onOpenSymbol={openSymbolAt}
             placingStart={placingStart}
             canHold={!placingStart}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onPaint={paint}
-            onEnd={endStroke}
+            canUndo={canUndo && turn.canPlace}
+            canRedo={canRedo && turn.canPlace}
             onUndo={undo}
             onRedo={redo}
-            overlay={<MeetingOverlay meeting={visibleMeeting} />}
+            canPlace={turn.canPlace}
+            onBlocked={blocked}
+            turnBar={<TurnBar {...turn} />}
+            onMoveSymbol={(id, index) => {
+              if (!canPlaceNow()) { blocked(); return; }
+              endStroke(); moveDocumentSymbol(id, index);
+            }}
+            onPaint={paint}
+            onEnd={endStroke}
+            overlay={<MeetingOverlay meeting={meeting} />}
           />
           <aside className="preview-panel" aria-label={t("배치 결과")}>
             <div className="live-preview">
@@ -423,7 +450,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
                 derivation={derivation}
                 mode="overview"
                 feedback={feedback}
-                    meeting={meetingVisuals(visibleMeeting,true)}
+                    meeting={meetingVisuals(meeting,true)}
               />}
               <button onClick={enter} aria-label={t("들어가기")}>
                 <span aria-hidden="true">↗</span>
@@ -441,7 +468,8 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
       {showMaker && contentType === "sound" && <SoundMaker
         asset={editingAsset} defaultName={nextSoundName} onSave={saveAsset}
         placement={!!selected}
-        onDelete={editingAsset ? deleteSymbol : undefined}
+        deleteDisabled={!turn.canPlace}
+        onDelete={editingAsset && !emptySymbol(editingAsset) ? deleteSymbol : undefined}
         onClose={() => { setShowMaker(false); setEditingAsset(undefined); setSelected(null); }}
       />}
       {showMaker && contentType !== "sound" && (
@@ -450,7 +478,8 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
           contentType={contentType}
           onSave={saveAsset}
           placement={!!selected}
-          onDelete={editingAsset ? deleteSymbol : undefined}
+          deleteDisabled={!turn.canPlace}
+          onDelete={editingAsset && !emptySymbol(editingAsset) ? deleteSymbol : undefined}
           onClose={() => {
             setShowMaker(false);
             setEditingAsset(undefined); setSelected(null);

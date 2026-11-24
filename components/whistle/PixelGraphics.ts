@@ -62,18 +62,20 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
     generateMipmaps: false,
     depthBuffer: true,
     samples,
+    count: 2,
   });
-  const colorMask = target.clone();
-  const maskMode = { value: 0 };
   const pixelFootprint = {value: 1};
-  const maskMaterials = new WeakMap<THREE.Material, { color: { value: number }; detail: { value: number }; soft: { value: number } }>();
-  const maskBackground = new THREE.Color(0);
+  const maskMaterials = new WeakMap<THREE.Material, { name: string; color: { value: number }; detail: { value: number }; soft: { value: number } }>();
+  const clearColor = new THREE.Color();
+  const maskClear = new Float32Array([0, 0, 0, 1]);
   const prepareColorMask = (scene: THREE.Scene) => {
     scene.traverse(object => {
       const mesh = object as THREE.Mesh;
       if (!mesh.material) return;
       for (const surface of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-        const keep = ["symbol-content", "surface-image", "dithered-sky", "connection-surface", "approach-outline"].includes(object.name);
+        let color = maskMaterials.get(surface);
+        if (color?.name === object.name) continue;
+        const keep = ["symbol-content", "surface-image", "dithered-sky", "meteor-shower", "connection-surface", "approach-outline"].includes(object.name);
         const stone = object.name === "scattered-stones" || object.name === "stones-surface-image";
         const kind = ["grass-understory", "hole-bottom", "world-horizon"].includes(object.name) ? 0
           : ["continuous-ground", "distant-ground", "terrain-bank"].includes(object.name) ? 1
@@ -81,25 +83,23 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
           : stone ? 4 : object.name === "generated-water" ? 5 : object.name === "cloud" ? 6
           : object.name.startsWith("generated-leaves-") ? 8 : 7;
         const detail = kind / 8;
-        let color = maskMaterials.get(surface);
         if (!color) {
-          color = { color: { value: keep ? 1 : 0 }, detail: { value: detail }, soft: { value: stone ? 1 : 0 } };
+          color = { name: object.name, color: { value: keep ? 1 : 0 }, detail: { value: detail }, soft: { value: stone ? 1 : 0 } };
           maskMaterials.set(surface, color);
           const preserve = color;
           const previous = surface.onBeforeCompile;
           const key = surface.customProgramCacheKey();
-          surface.customProgramCacheKey = () => key + "|source-color-mask";
+          surface.customProgramCacheKey = () => key + "|pixel-mrt";
           surface.onBeforeCompile = (shader, gl) => {
             previous.call(surface, shader, gl);
-            shader.uniforms.pixelMaskPass = maskMode;
             shader.uniforms.pixelKeepColor = preserve.color;
             shader.uniforms.pixelSurfaceDetail = preserve.detail;
             shader.uniforms.pixelSoftSurface = preserve.soft;
             shader.uniforms.pixelDaylight = daylight;
             shader.uniforms.pixelFootprint = pixelFootprint;
             shader.fragmentShader = shader.fragmentShader.replace(/\/\/ pixel-mask-start[\s\S]*?\/\/ pixel-mask-end/g, "");
-            if (!shader.fragmentShader.includes("uniform float pixelMaskPass;"))
-              shader.fragmentShader = "uniform float pixelMaskPass; uniform float pixelKeepColor; uniform float pixelSurfaceDetail; uniform float pixelSoftSurface; uniform float pixelDaylight; uniform float pixelFootprint;\n" + shader.fragmentShader;
+            if (!shader.fragmentShader.includes("out vec4 pixelMask;"))
+              shader.fragmentShader = "layout(location = 1) out vec4 pixelMask;\nuniform float pixelKeepColor; uniform float pixelSurfaceDetail; uniform float pixelSoftSurface; uniform float pixelDaylight; uniform float pixelFootprint;\n" + shader.fragmentShader;
             if (!shader.vertexShader.includes("varying vec3 pixelSurfacePosition;")) {
               shader.vertexShader = "varying vec3 pixelSurfacePosition;\n" + shader.vertexShader;
               shader.vertexShader = shader.vertexShader.replace(/void\s+main\s*\(\s*\)\s*\{/, `void main() {
@@ -242,14 +242,13 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
                 gl_FragColor.rgb=vec3(pixelLinear(pixelTone(ladderLight,dotThreshold,detailFade)));
               ` : ""}
               ${object.name === "world-horizon" ? `gl_FragColor.rgb=vec3(pixelLinear(pixelHorizon(pixelDaylight)));` : ""}
-              if (pixelMaskPass > .5) {
-                gl_FragColor.rgb = vec3(sourceCoverage, pixelSurfaceDetail * (1.0-sourceCoverage), pixelSoftSurface * (1.0-sourceCoverage));
-              }
+              pixelMask = vec4(sourceCoverage, pixelSurfaceDetail * (1.0-sourceCoverage), pixelSoftSurface * (1.0-sourceCoverage), gl_FragColor.a);
               // pixel-mask-end
             }`);
           };
           surface.needsUpdate = true;
         }
+        color.name = object.name;
         color.color.value = keep ? 1 : 0;
         color.detail.value = detail;
         color.soft.value = stone ? 1 : 0;
@@ -257,7 +256,7 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
     });
   };
   const material = new THREE.ShaderMaterial({
-    uniforms: { source: { value: target.texture }, colorMask: { value: colorMask.texture }, texel: { value: new THREE.Vector2(1, 1) }, worldResolution: {value: new THREE.Vector2(1,1)} },
+    uniforms: { source: { value: target.textures[0] }, colorMask: { value: target.textures[1] }, worldResolution: {value: new THREE.Vector2(1,1)} },
     depthTest: false,
     depthWrite: false,
     vertexShader: `
@@ -270,7 +269,6 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
     fragmentShader: `
       uniform sampler2D source;
       uniform sampler2D colorMask;
-      uniform vec2 texel;
       uniform vec2 worldResolution;
       varying vec2 screenUv;
       void main() {
@@ -299,36 +297,38 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
       renderer.setSize(width, height, false);
       const native=renderer.getDrawingBufferSize(new THREE.Vector2());
       target.setSize(native.x, native.y);
-      colorMask.setSize(native.x, native.y);
-      material.uniforms.texel.value.set(1 / native.x, 1 / native.y);
       material.uniforms.worldResolution.value.set(w,h);
       pixelFootprint.value=native.y/h;
     },
     render(scene: THREE.Scene, sceneCamera: THREE.Camera) {
       prepareColorMask(scene);
       renderer.setRenderTarget(target);
-      renderer.render(scene, sceneCamera);
-      {
-        const background = scene.background;
-        const shadowUpdate = renderer.shadowMap.autoUpdate;
-        try {
-          maskMode.value = 1;
-          scene.background = maskBackground;
-          renderer.shadowMap.autoUpdate = false;
-          renderer.setRenderTarget(colorMask);
-          renderer.render(scene, sceneCamera);
-        } finally {
-          maskMode.value = 0;
-          scene.background = background;
-          renderer.shadowMap.autoUpdate = shadowUpdate;
+      const background = scene.background;
+      const autoClear = renderer.autoClear;
+      const clearAlpha = renderer.getClearAlpha();
+      renderer.getClearColor(clearColor);
+      try {
+        if (background && "isColor" in background) {
+          renderer.setClearColor(background, 1);
+          scene.background = null;
         }
+        renderer.state.buffers.color.setMask(true);
+        renderer.state.buffers.depth.setMask(true);
+        renderer.clear();
+        const gl = renderer.getContext() as WebGL2RenderingContext;
+        gl.clearBufferfv(gl.COLOR, 1, maskClear);
+        renderer.autoClear = false;
+        renderer.render(scene, sceneCamera);
+      } finally {
+        scene.background = background;
+        renderer.autoClear = autoClear;
+        renderer.setClearColor(clearColor, clearAlpha);
       }
       renderer.setRenderTarget(null);
       renderer.render(screen, camera);
     },
     dispose() {
       target.dispose();
-      colorMask.dispose();
       geometry.dispose();
       material.dispose();
     },
