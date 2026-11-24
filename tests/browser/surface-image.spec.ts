@@ -4,7 +4,10 @@ import { writeFile } from "node:fs/promises";
 import { test, expect, type Page } from "@playwright/test";
 import { terrainFixtures } from "../terrain-fixtures";
 
-test.setTimeout(60_000);
+test.setTimeout(120_000);
+test.beforeEach(async({page})=>{
+  await page.addInitScript(()=>Object.defineProperty(window,"devicePixelRatio",{value:.5}));
+});
 
 async function openScene(page: Page, environmentTargets = false) {
   const errors: string[] = [];

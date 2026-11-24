@@ -20,12 +20,18 @@ test("Pd → JS: 같은 이름을 여럿이 한 번씩 받고, 그만 받기와 
     const pd = (window as unknown as { Pd4Web: Pd }).Pd4Web;
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const got: string[] = [];
-    const take = async (send: () => void) => { got.length = 0; send(); await wait(200); return [...got]; };
+    const take = async (send: () => void, expected=1) => {
+      got.length=0;send();
+      const until=performance.now()+3000;
+      while(got.length<expected&&performance.now()<until)await wait(20);
+      await wait(50);
+      return [...got];
+    };
 
     // [r to-js] → [s 이름] 대신 JS에서 바로 그 이름으로 보낸다: 받는 쪽은 같다(이름에 묶인 받는 객체).
     const stopA = pd.onFloatReceived("probe-f", (name: unknown, value: unknown) => got.push(`A ${name} ${value}`)) as () => void;
     pd.onFloatReceived("probe-f", (...args: unknown[]) => got.push(`B ${args.join(" ")}`)); // 나머지 인자도 된다
-    const both = await take(() => pd.sendFloat("probe-f", 0.5));
+    const both = await take(() => pd.sendFloat("probe-f", 0.5),2);
     stopA();
     const afterStop = await take(() => pd.sendFloat("probe-f", 1));
 

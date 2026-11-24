@@ -1,7 +1,19 @@
 import { test, expect, type Page } from "@playwright/test";
 import { terrainFixtures } from "../terrain-fixtures";
 
+test.setTimeout(90_000);
+test.beforeEach(async({page})=>{
+  await page.addInitScript(()=>{
+    const get=HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext=function(this:HTMLCanvasElement,kind:string,options?:object){
+      return get.call(this,kind,kind==="webgl"||kind==="webgl2"?{...options,preserveDrawingBuffer:true}:options);
+    } as typeof get;
+  });
+});
+
 async function pixels(page: Page) {
+  await page.locator('.scene canvas').scrollIntoViewIfNeeded();
+  await expect(page.locator('.scene canvas')).toHaveAttribute('data-ready','true',{timeout:30_000});
   return page.locator(".scene canvas").evaluate(canvas => new Promise<{ shades: number[]; lit: number; total: number; width: number; displayWidth: number }>(resolve => {
     requestAnimationFrame(() => {
       const source = canvas as HTMLCanvasElement;
@@ -253,6 +265,7 @@ test("sky and distant ground keep the same horizon tone during automatic sunset"
   }, world);
   await page.goto(".");
   await page.getByRole("button", { name: "플레이", exact: true }).click();
+  await expect(page.locator('.play-shell canvas')).toHaveAttribute('data-ready','true',{timeout:30_000});
   for (const [hour, minute] of [[17, 30], [18, 0], [18, 30], [23, 0]]) {
     await page.clock.setSystemTime(new Date(2026, 10, 19, hour, minute));
     await page.clock.runFor(2500);

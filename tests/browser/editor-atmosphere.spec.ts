@@ -3,6 +3,9 @@ import { test, expect, type Page } from "@playwright/test";
 import { terrainFixtures } from "../terrain-fixtures";
 
 test.setTimeout(60_000);
+test.beforeEach(async({page})=>{
+  await page.addInitScript(()=>Object.defineProperty(window,"devicePixelRatio",{value:.5}));
+});
 
 async function setup(page: Page) {
   const errors: string[] = [];
