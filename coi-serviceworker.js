@@ -33,8 +33,8 @@ if (typeof window === "undefined") {
                       credentials: "omit",
                   })
                 : r;
-        // [whistle 수정] 받기가 실패하면 한 번 더 받는다. 그래도 실패하면 이유를 페이지 콘솔에 보낸다.
-        // (폰 Firefox에서 pd4web 작업자 4개의 스크립트 요청이 여기서 실패해 엔진이 멈췄다.)
+        // [whistle 수정] 받기가 실패하면 원래 요청을 복사하지 않고 주소만으로 한 번 더 받는다.
+        // (폰 Firefox에서 pd4web 작업자 4개의 스크립트 요청이 여기서 실패해 엔진이 멈췄다. 주소로 다시 받으면 된다.)
         const forward = (req) => fetch(req)
                 .then((response) => {
                     if (response.status === 0) {
@@ -59,17 +59,8 @@ if (typeof window === "undefined") {
                 });
         event.respondWith(
             forward(request)
-                // 두 번째는 원래 요청(작업자 요청의 mode·destination 등)을 복사하지 않고 주소만으로 받는다.
-                .catch((first) => {
-                    console.error(first);
-                    return forward(new Request(r.url, { credentials: "same-origin" }));
-                })
-                .catch((e) => {
-                    console.error(e);
-                    const message = `coi-serviceworker: ${r.destination || "?"} ${r.mode} ${r.url} 받기 실패: ${e && e.name}: ${e && e.message}`;
-                    self.clients.matchAll({ includeUncontrolled: true }).then((clients) => clients.forEach((c) => c.postMessage({ type: "coiFetchError", message })));
-                    throw e;
-                }),
+                .catch(() => forward(new Request(r.url, { credentials: "same-origin" })))
+                .catch((e) => console.error(e)),
         );
     });
 } else {
@@ -90,12 +81,6 @@ if (typeof window === "undefined") {
         };
 
         const n = navigator;
-        // [whistle 수정] 서비스 워커에서 받기가 실패한 이유를 페이지 콘솔에 남긴다.
-        n.serviceWorker && n.serviceWorker.addEventListener("message", (ev) => {
-            if (ev.data && ev.data.type === "coiFetchError") console.error(ev.data.message);
-        });
-        // addEventListener만으로는 메시지가 오지 않는다(onmessage를 쓰거나 startMessages()를 불러야 한다).
-        n.serviceWorker && n.serviceWorker.startMessages();
         const controlling = n.serviceWorker && n.serviceWorker.controller;
 
         // Record the failure if the page is served by serviceWorker.
