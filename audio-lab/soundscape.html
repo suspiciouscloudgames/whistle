@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- pd4web 엔진(SharedArrayBuffer)에 필요한 교차 출처 격리. 헤더를 못 거는 GitHub Pages용 -->
+    <script src="/whistle/coi-serviceworker.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/whistle/favicon.svg" />
+    <title>Whistle · 사운드스케이프 테스트</title>
+    <style>
+      body { max-width: 820px; margin: 40px auto; padding: 0 20px; font-family: system-ui, sans-serif; line-height: 1.6; color: #222; background: #fafafa; }
+      fieldset { margin: 20px 0; padding: 16px 20px; border: 1px solid #bbb; }
+      label { display: inline-flex; flex-direction: column; margin: 6px 16px 12px 0; }
+      button { padding: 6px 12px; margin: 2px; cursor: pointer; }
+      .stage { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+      canvas { background: #fff; border: 1px solid #bbb; cursor: crosshair; max-width: 100%; }
+      table { border-collapse: collapse; flex: 1; min-width: 300px; }
+      td, th { border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: left; font-size: 14px; }
+      pre { white-space: pre-wrap; background: #eee; padding: 12px; max-height: 220px; overflow: auto; font-size: 13px; }
+    </style>
+    <script type="module" crossorigin src="/whistle/assets/soundscapeLab-DX6wmjkW.js"></script>
+    <link rel="modulepreload" crossorigin href="/whistle/assets/pd-runtime-m3XNWNmH.js">
+    <link rel="modulepreload" crossorigin href="/whistle/assets/soundscape-CXXMtBbR.js">
+  </head>
+  <body>
+    <h1>사운드스케이프 테스트</h1>
+    <p>
+      AudioContext 하나에서 여러 패치를 3D 위치에 놓고(PannerNode, 기본 equalpower · <code>?panning=hrtf</code>로 HRTF) 하나의 마스터로 믹스한다.
+      평면도를 클릭하면 선택한 패치를 그 위치에 놓는다. 가운데 ▲가 리스너(플레이어)이며 화살표 방향을 바라본다.
+      헤드폰으로 듣는다. 켜고 끌 때 0.4초 fade.
+    </p>
+    <button id="start">오디오 시작</button>
+    <button id="stop" disabled>오디오 종료</button>
+    <p id="status">시작 전</p>
+    <fieldset id="controls" disabled>
+      <legend>설정</legend>
+      <label>놓을 패치<select id="patch"></select></label>
+      <label>리스너 방향 (°, 0 = 화면 위쪽 −Z)<input id="yaw" type="range" min="-180" max="180" step="5" value="0" /></label>
+    </fieldset>
+    <div class="stage">
+      <canvas id="map" width="320" height="320"></canvas>
+      <table>
+        <thead><tr><th>#</th><th>패치</th><th>위치 (x, z)</th><th>상태</th><th></th></tr></thead>
+        <tbody id="sources"></tbody>
+      </table>
+    </div>
+    <p>마스터 출력 (채널별 최근 1초 peak): <output id="meter">—</output></p>
+    <pre id="log"></pre>
+  </body>
+</html>
