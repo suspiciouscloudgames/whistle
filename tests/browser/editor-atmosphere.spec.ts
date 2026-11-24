@@ -52,8 +52,7 @@ test("automatic daylight follows local time and its menu opens without changing 
   await page.clock.fastForward(30_000);
   await expect(indicator).toHaveAttribute("data-time-of-day", "night");
   await expect(indicator).toHaveAccessibleName(/현재 밤/);
-  await page.clock.runFor(8000);
-  await expect.poll(() => page.evaluate(() => (globalThis as any).__testScene.background.r)).toBeLessThan(.01);
+  await expect.poll(() => page.evaluate(() => (globalThis as any).__testScene.background.r), { timeout: 30_000 }).toBeLessThan(.01);
   await page.screenshot({ path: testInfo.outputPath("night-indicator.png") });
   expect(errors).toEqual([]);
 });

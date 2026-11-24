@@ -2,7 +2,7 @@
 // - edit.pd   : whistle-edit           (에디터 편집음)
 // - player.pd : whistle-player, whistle-board-height (3D 이동음, UWB 보드 높이)
 //   whistle-player는 메시지 네 개로 보낸다(Pd에서 [route position yaw stat footed]):
-//   position x y z · yaw a · stat crouch run grounded falling · footed grass water
+//   position x y z · yaw a · stat crouch run grounded falling · footed grass water · speed v(칸/초)
 // - event.pd  : whistle-event          (게임 이벤트: fallingstar 0/1, rain 0/1. Pd에서 [route fallingstar rain])
 // - 3D 이동음 정지: whistle-player-stop (bang). 다음 whistle-player 메시지부터 다시 소리를 내는 것은 패치가 한다.
 // 출력은 main.pd의 믹스다운(채널 1–2). 음소거는 그 게인 fade로 한다.
@@ -22,6 +22,8 @@ export type PlayerSound = {
   crouch?: boolean; run?: boolean; grounded?: boolean; falling?: boolean;
   /** 발밑 풀 농도 0~1, 발이 물속이면 1 */
   grass: number; water?: number;
+  /** 땅 위에서 움직이는 빠르기(칸/초, 수평). 있으면 whistle-player speed로 보낸다 */
+  speed?: number;
 };
 
 export function validateBoardHeight(height: number) {
@@ -48,12 +50,13 @@ export function interactionMessages(patches: { edit: Sender; player: Sender; eve
       patches.edit.send("whistle-edit", [bounded(x, 0, 1), bounded(z, 0, 1), bounded(overlap, 0, 1),
         ...(asset === undefined ? [] : [asset, action ?? "paint", surface ?? "plain"])]);
     },
-    player({ x, y, z, yaw = 0, crouch, run, grounded, falling, grass, water = 0 }: PlayerSound) {
+    player({ x, y, z, yaw = 0, crouch, run, grounded, falling, grass, water = 0, speed }: PlayerSound) {
       const send = (message: PdMessage) => patches.player.send("whistle-player", message);
       send(["position", bounded(x, 0, 1), bounded(y, -1000, 1000), bounded(z, 0, 1)]);
       send(["yaw", bounded(yaw, -1e6, 1e6)]);
       send(["stat", Number(!!crouch), Number(!!run), Number(!!grounded), Number(!!falling)]);
       send(["footed", bounded(grass, 0, 1), bounded(water, 0, 1)]);
+      if (speed !== undefined) send(["speed", bounded(speed, 0, 1000)]);
     },
     boardHeight(height: number) { patches.player.send("whistle-board-height", [validateBoardHeight(height)]); },
     /** 게임 이벤트 켬(1)/끔(0). fallingstar: 디버그 화면의 1 키(누를 때마다 번갈아). rain: 날씨가 비이면 1, 아니면 0. */

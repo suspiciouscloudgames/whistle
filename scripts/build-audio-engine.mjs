@@ -19,8 +19,8 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const engineDir = join(root, "audio/engine");
 const pd4web = process.env.PD4WEB || "pd4web";
-/** wasm 메모리(MB). 메모리가 늘어나지 않는 빌드라 동시에 띄울 패치 수(슬롯)를 감당할 만큼 잡는다. */
-const MEMORY_MB = 64;
+/** wasm 메모리(MB). 메모리가 늘어나지 않는 빌드라 슬롯과 업로드한 소리(1분 스테레오 하나에 wav 사본 11.5MB + 배열 23MB)를 감당할 만큼 잡는다. */
+const MEMORY_MB = 256;
 /** 엔진 결과물 중 앱이 쓰는 파일 */
 const FILES = ["pd4web.js", "pd4web.wasm", "pd4web.data"];
 

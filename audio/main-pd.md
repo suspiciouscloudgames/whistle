@@ -61,6 +61,9 @@ JS는 어느 영역이 켜지고 꺼지는지 메시지로 알리고, 나온 소
 | `whistle-player`, `whistle-edit`, `whistle-event`, `whistle-board-height` | (지금과 같음) | 상호작용 값([`pd-receive.md`](pd-receive.md)) |
 | `whistle-player-stop` | `bang` | 3D 이동음을 끈다. 다음 `whistle-player` 메시지부터 다시 소리를 내는 것은 패치가 한다 |
 
+- 배치한 소리(업로드): `main.pd` 안의 서브패치 `[pd sound_bank]`가 받는다. JS가 소리마다 한 번 `whistle-sound-bank <이름> <경로>`를 보내면
+  `[pd sounds]` 안에 `<이름>-L`·`<이름>-R` 배열을 만들고 읽는다. 재생은 영역처럼 슬롯 하나(`on N placed_sound vK L R`)이고,
+  `placed_sound`가 그 배열을 `[array_player~]`로 재생한다. 가까우면 느리게, 멀면 빠르게(`distance <타일> <반경>`). paulstretch~로 늘리는 버전은 `placed_sound_paulstretch_example.pd`. 같은 배열을 다른 필터도 쓸 수 있다.
 - `on`은 같은 번호로 다시 와도 된다(먼저 비우고 다시 만든다). 개발 서버의 패치 갱신이 이것을 쓴다.
 - 엔진이 열리면 JS가 `main.pd`를 바로 연다(pd4web `openPatch`. 일반 Pd에서 파일을 연 것과 같고 loadbang도 온다).
 

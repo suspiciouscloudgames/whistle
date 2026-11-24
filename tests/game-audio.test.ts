@@ -199,6 +199,17 @@ test("events set while loading or paused reach Pd once the session runs; play/st
   audio.dispose();
 });
 
+test("player speed goes to Pd as a fifth message only when measured", () => {
+  const sent: string[] = [];
+  const to = { send: (bus: string, message: (string | number)[]) => { sent.push(`${bus} ${message.join(" ")}`); } };
+  const messages = interactionMessages({ edit: to, player: to, event: to });
+  messages.player({ x: 0.5, y: 0, z: 0.5, grass: 0, speed: 1.5 });
+  assert.equal(sent.at(-1), "whistle-player speed 1.5");
+  sent.length = 0;
+  messages.player({ x: 0.5, y: 0, z: 0.5, grass: 0 });
+  assert.equal(sent.length, 4);
+});
+
 test("game events go to Pd as whistle-event <name> 1/0", () => {
   const sent: string[] = [];
   const to = { send: (bus: string, message: (string | number)[]) => { sent.push(`${bus} ${message.join(" ")}`); } };

@@ -46,6 +46,8 @@ export type PatchInstance = {
   node: AudioNode;
   /** `<id>-<bus>`로 보낸다(패치는 [r $1-<bus>]) */
   send(bus: string, message: PdMessage): void;
+  /** 패치가 `[s $1-<bus>]`로 보내는 bang을 받는다(Pd → JS). destroy 때 함께 끊는다 */
+  onBang(bus: string, listener: () => void): void;
   destroy(): void;
 };
 
@@ -56,11 +58,15 @@ export type PdEngine = {
   /** 영역 패치 하나를 빈 슬롯에 띄운다(main.pd에 on을 보낸다) */
   start(name: string): Promise<PatchInstance>;
   /** 전역 버스로 보낸다(whistle-player 등. main.pd 안의 패치가 받는다) */
-  send(bus: string, message: PdMessage): void;
+  send(bus: string, message: PdMessage, remember?: boolean): void;
+  forget(bus: string, message: PdMessage): void;
   /** 믹스다운(채널 1–2): main.pd가 공간화 없이 내보내는 소리 */
   mixdown: AudioNode;
   /** 지금 쓰는 슬롯 수 */
   slotsInUse(): number;
+  /** 엔진 가상 디스크(메모리)에 파일을 쓴다/지운다. 경로는 / 기준(예: "uploads/s1.wav"). 패치는 [soundfiler] 등으로 읽는다. */
+  writeFile(path: string, data: Uint8Array): void;
+  removeFile(path: string): void;
 };
 
 const loadScript = (url: string) => new Promise<void>((resolve, reject) => {
@@ -103,17 +109,18 @@ function untar(bytes: Uint8Array, write: (path: string, data: Uint8Array) => voi
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function createEngine(baseUrl: string, latencyHint: AudioContextLatencyCategory, timeout: number): Promise<PdEngine> {
+  const assetUrl = (path: string) => `${baseUrl}${path}?v=${import.meta.env.VITE_AUDIO_REVISION}`;
   if (!globalThis.crossOriginIsolated) {
     throw new Error("pd4web 엔진에는 교차 출처 격리(COOP/COEP)가 필요합니다. 페이지를 새로고침하세요.");
   }
   // 패치 폴더(tar.gz 하나)를 먼저 받는다. 서버에 따라 .gz를 Content-Encoding: gzip으로 보내 브라우저가 먼저 풀어 버리기도 한다.
   // gzip 머리(1f 8b)가 있을 때만 푼다.
-  let archive = new Uint8Array(await (await fetchOk(`${baseUrl}patches.tar.gz`)).arrayBuffer());
+  let archive = new Uint8Array(await (await fetchOk(assetUrl("patches.tar.gz"))).arrayBuffer());
   if (archive[0] === 0x1f && archive[1] === 0x8b) {
     archive = new Uint8Array(await new Response(new Blob([archive]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
   }
   const g = globals();
-  const engineUrl = `${baseUrl}engine/pd4web.js`;
+  const engineUrl = assetUrl("engine/pd4web.js");
   if (!g.Pd4WebModule) await loadScript(engineUrl);
   // 엔진은 시작 전에 같은 스크립트로 작업자(Web Worker) 4개를 띄우고, 넷 다 응답해야 시작한다.
   // 폰 Firefox에서는 이 작업자 스크립트 요청이 서비스 워커(coi-serviceworker)에서 자주 실패해, 엔진이 오류 없이 멈췄다.
@@ -127,7 +134,7 @@ async function createEngine(baseUrl: string, latencyHint: AudioContextLatencyCat
       super(new URL(url, location.href).href === engineScript ? source : url, options);
     }
   };
-  const module = await g.Pd4WebModule({ locateFile: (path) => `${baseUrl}engine/${path}` });
+  const module = await g.Pd4WebModule({ locateFile: (path) => assetUrl(`engine/${path}`) });
   const pd = new module.Pd4Web();
   shareReceivers(pd);
   // pd4web의 GUI·콜백 코드는 전역 Pd4Web을 찾는다.
@@ -209,10 +216,12 @@ async function createEngine(baseUrl: string, latencyHint: AudioContextLatencyCat
     const id = `v${++count}`;
     const merger = context.createChannelMerger(2);
     const last = new Map<string, () => void>();
+    const listening: (() => void)[] = [];
     let closed = false;
     const destroy = () => {
       if (closed) return;
       closed = true;
+      for (const stop of listening.splice(0)) stop();
       try { message("whistle-slot", "off", [index]); } catch { /* 엔진이 이미 멈춤 */ }
       splitter.disconnect(merger);
       merger.disconnect();
@@ -238,12 +247,28 @@ async function createEngine(baseUrl: string, latencyHint: AudioContextLatencyCat
         const target = `${id}-${bus}`;
         last.set(key(target, values), deliver(target, values));
       },
+      onBang(bus: string, listener: () => void) {
+        // pd4web은 한 번 등록한 이름을 풀지 못한다(audio/pd-to-js.md). 이름(vK)은 다시 쓰지 않으므로 함수만 뗀다.
+        const stop = pd.onBangReceived(`${id}-${bus}`, () => { if (!closed) listener(); });
+        if (stop) listening.push(stop);
+      },
       destroy,
     };
   };
-  const send = (bus: string, values: PdMessage) => {
+  const send = (bus: string, values: PdMessage, remember = true) => {
     const replay = deliver(bus, values);
-    if (bus !== "whistle-blow") globalLast.set(key(bus, values), replay);
+    if (remember && bus !== "whistle-blow") globalLast.set(key(bus, values), replay);
+  };
+  const forget = (bus: string, values: PdMessage) => { globalLast.delete(key(bus, values)); };
+  const removeFile = (path: string) => {
+    try { module.FS.unlink(`/${path}`); } catch { /* 이미 없음 */ }
+  };
+  const writeFile = (path: string, data: Uint8Array) => {
+    const dir = path.slice(0, path.lastIndexOf("/") + 1);
+    if (dir) module.FS.mkdirTree(`/${dir}`);
+    // 엔진의 FS.writeFile은 있는 파일을 비우지 않고 뒤에 이어 쓴다. 지우고 쓴다.
+    removeFile(path);
+    module.FS.writeFile(`/${path}`, data);
   };
 
   // 개발 서버에서만: 패치 파일을 고치면(vite.config.ts가 알려 줌) 엔진 디스크의 파일을 바꾸고, 그 파일을 쓰는 것을 다시 만든다.
@@ -251,15 +276,11 @@ async function createEngine(baseUrl: string, latencyHint: AudioContextLatencyCat
   // Pd는 abstraction을 만들 때마다 파일을 새로 읽으므로, 새로 뜨는 슬롯(영역에 다시 들어갈 때)은 저절로 새 버전이다.
   import.meta.hot?.on("whistle:patch", ({ path, data }: { path: string; data?: string }) => {
     if (data === undefined) {
-      try { module.FS.unlink(`/${path}`); } catch { /* 이미 없음 */ }
+      removeFile(path);
       if (files.includes(path)) files.splice(files.indexOf(path), 1);
       return;
     }
-    const dir = path.slice(0, path.lastIndexOf("/") + 1);
-    if (dir) module.FS.mkdirTree(`/${dir}`);
-    // 엔진의 FS.writeFile은 있는 파일을 비우지 않고 뒤에 이어 쓴다. 지우고 쓴다.
-    try { module.FS.unlink(`/${path}`); } catch { /* 새 파일 */ }
-    module.FS.writeFile(`/${path}`, Uint8Array.from(atob(data), (c) => c.charCodeAt(0)));
+    writeFile(path, Uint8Array.from(atob(data), (c) => c.charCodeAt(0)));
     if (!files.includes(path)) files.push(path);
     if (!path.endsWith(".pd")) return;
     const changed = path.slice(path.lastIndexOf("/") + 1, -3);
@@ -288,7 +309,7 @@ async function createEngine(baseUrl: string, latencyHint: AudioContextLatencyCat
     return [...words].some((word) => word && files.includes(`${word}.pd`) && uses(word, changed, seen));
   };
 
-  return { context, files, start, send, mixdown, slotsInUse: () => used.size };
+  return { context, files, start, send, forget, mixdown, slotsInUse: () => used.size, writeFile, removeFile };
 }
 
 /** 터치·키 처리 안에서 부른다. 엔진의 AudioContext가 막혀(suspended) 있으면 켠다. 엔진이 아직 없으면 아무것도 안 한다. */

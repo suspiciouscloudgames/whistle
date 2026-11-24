@@ -15,37 +15,42 @@ function wav(seconds = 0.5) {
   for (let i = 0; i < count; i++) bytes.writeInt16LE(Math.round(Math.sin(i / rate * Math.PI * 880) * 8000), 44 + i * 2);
   return bytes;
 }
-type Probe = { contexts: AudioContext[]; started: number; active: number; pd: number; rms: number };
+type Probe = { contexts: AudioContext[]; split?: ChannelSplitterNode; analysers?: Map<number, AnalyserNode> };
 const probe = (page: Page) => page.evaluate(() => {
-  const p = (window as typeof window & { soundProbe: Probe }).soundProbe;
-  return { contexts: p.contexts.map(c => c.state), started: p.started, active: p.active, pd: p.pd, rms: p.rms };
+  const w = window as typeof window & { soundProbe: Probe; Pd4WebAudioWorkletNode?: AudioWorkletNode;
+    pdProbe: { messages: { bus: string; value: (number | string)[] }[] } };
+  const p = w.soundProbe, slots = new Map<number, { patch: string; channels: number[] }>();
+  let started = 0;
+  for (const message of w.pdProbe.messages) {
+    const [slot, patch, , left, right] = message.value;
+    if (message.bus === "whistle-slot on") {
+      slots.set(Number(slot), { patch: String(patch), channels: [Number(left) - 1, Number(right) - 1] });
+      if (patch === "placed_sound") started++;
+    } else if (message.bus === "whistle-slot off") slots.delete(Number(slot));
+  }
+  const active = [...slots.values()].filter(slot => slot.patch === "placed_sound");
+  const node = w.Pd4WebAudioWorkletNode;
+  let rms = 0;
+  if (node && active.length) {
+    if (!p.split) { p.split = node.context.createChannelSplitter(32); node.connect(p.split); p.analysers = new Map(); }
+    for (const channel of active.flatMap(slot => slot.channels)) {
+      let analyser = p.analysers!.get(channel);
+      if (!analyser) { analyser = node.context.createAnalyser(); analyser.fftSize = 512; p.split.connect(analyser, channel); p.analysers!.set(channel, analyser); }
+      const wave = new Float32Array(512); analyser.getFloatTimeDomainData(wave);
+      rms = Math.max(rms, Math.sqrt(wave.reduce((sum, value) => sum + value * value, 0) / wave.length));
+    }
+  }
+  return { contexts: p.contexts.map(c => c.state), started, active: active.length, rms };
 });
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(world => {
     if (!localStorage.getItem("whistle.world.v2")) localStorage.setItem("whistle.world.v2", JSON.stringify(world));
     localStorage.setItem("whistle.language", "ko");
     const state = window as typeof window & { soundProbe: Probe };
-    state.soundProbe = { contexts: [], started: 0, active: 0, pd: 0, rms: 0 };
+    state.soundProbe = { contexts: [] };
     const Original = window.AudioContext;
     window.AudioContext = class extends Original {
       constructor(options?: AudioContextOptions) { super(options); state.soundProbe.contexts.push(this); }
-      createBufferSource() {
-        const source = super.createBufferSource();
-        const start = source.start.bind(source), stop = source.stop.bind(source);
-        let active = false;
-        const ended = () => { if (active) { active = false; state.soundProbe.active--; } };
-        source.start = (...args) => { active = true; state.soundProbe.started++; state.soundProbe.active++; start(...args); };
-        source.stop = (...args) => { ended(); stop(...args); };
-        source.addEventListener("ended", ended);
-        const analyser = this.createAnalyser(); analyser.fftSize = 512; source.connect(analyser);
-        const wave = new Float32Array(512);
-        const timer = setInterval(() => {
-          if (this.state === "closed") { clearInterval(timer); return; }
-          analyser.getFloatTimeDomainData(wave);
-          state.soundProbe.rms = Math.sqrt(wave.reduce((s, n) => s + n * n, 0) / wave.length);
-        }, 20);
-        return source;
-      }
     };
   }, withEmptyContent(terrainFixtures().flat, "sound"));
   await probePd(page);
@@ -205,4 +210,53 @@ test("a full minute is accepted and compressed below 1 MB", async ({ page }) => 
   expect(result.duration).toBeLessThan(60.1);
   await page.getByRole("button", { name: "저장", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("one-shot Pd sounds end and restart only on a new play session", async ({ page }) => {
+  await upload(page, 0.3);
+  await page.locator('[data-cell="126"]').click();
+  await page.locator('[data-cell="126"] [data-symbol-kind=sound][data-empty-symbol=false]').click();
+  await page.getByRole("button", { name: "한 번", exact: true }).click();
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  await page.getByRole("button", { name: "플레이", exact: true }).click();
+  await expect.poll(async () => (await probe(page)).started, { timeout: 30_000 }).toBe(1);
+  await expect.poll(async () => (await probe(page)).active).toBe(0);
+  await page.waitForTimeout(300);
+  expect((await probe(page)).started).toBe(1);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "플레이", exact: true }).click();
+  await expect.poll(async () => (await probe(page)).started).toBe(2);
+  await expect.poll(async () => (await probe(page)).active).toBe(0);
+});
+
+test("native Pd sound arrays can be evicted and reloaded while another sound plays", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error" || /couldn't create|no such array/.test(message.text())) errors.push(message.text()); });
+  await page.goto("audio-lab/soundscape.html");
+  await page.getByRole("button", { name: "오디오 시작" }).click();
+  await expect(page.locator("#status")).toContainText("running", { timeout: 30_000 });
+  const data = [1, 2, 3].map(value => { const bytes = wav(.25); bytes.writeInt16LE(value, 44); return `data:audio/wav;base64,${bytes.toString("base64")}`; });
+  await page.evaluate(async data => {
+    const { openEngine } = await import(/* @vite-ignore */ `${location.origin}/whistle/lib/audio/pd-runtime.ts`);
+    const { createPdSounds } = await import(/* @vite-ignore */ `${location.origin}/whistle/lib/audio/pd-sounds.ts`);
+    const engine = await openEngine("/whistle/audio/");
+    const bank = createPdSounds(engine, 160_000);
+    const records = data.map(data => ({ data, duration: .25, volume: 1, mode: "loop" }));
+    const a = await bank.play(records[0]), b = await bank.play(records[1]);
+    a.destroy();
+    const c = await bank.play(records[2]);
+    c.destroy();
+    const again = await bank.play(records[0]);
+    const analyser = engine.context.createAnalyser(); analyser.fftSize = 2048;
+    again.node.connect(analyser); again.node.connect(engine.context.destination);
+    const w = window as any;
+    w.bankEnds = 0; again.onEnd(() => w.bankEnds++);
+    w.bankLevel = () => { const wave = new Float32Array(2048); analyser.getFloatTimeDomainData(wave); return Math.sqrt(wave.reduce((sum, n) => sum + n * n, 0) / wave.length); };
+    w.bankStop = () => { b.destroy(); again.destroy(); return engine.slotsInUse(); };
+  }, data);
+  await expect.poll(() => page.evaluate(() => (window as any).bankLevel())).toBeGreaterThan(.01);
+  await expect.poll(() => page.evaluate(() => (window as any).bankEnds)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => (window as any).bankStop())).toBe(0);
+  expect(errors).toEqual([]);
 });

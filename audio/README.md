@@ -94,7 +94,7 @@ JS의 켜기·끄기 메시지로 `main.pd`가 "슬롯"에 띄우고, 상호작�
 ```text
 edit.pd · player.pd(→ 이동음 게인) · event.pd ─┐
 층별 영역 패치들(패닝 + 가운데 경로) ────────────┼─→ 마스터 게인 → 리미터 → 출력   (AudioContext 1개)
-배치한 녹음 사운드 ─────────────────────────────┘
+배치한 녹음 사운드(Pd 슬롯 placed_sound) ─────────┘
 ```
 
 - 상호작용 패치는 `edit`(whistle-edit), `player`(whistle-player·whistle-board-height),

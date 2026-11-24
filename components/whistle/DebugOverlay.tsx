@@ -73,11 +73,12 @@ function describe(info: GameAudioDebug, world: World, derivation: WorldDerivatio
   // 오디오
   const c = info.context;
   const byState = info.voices.reduce<Record<string, number>>((n, v) => ((n[v.state] = (n[v.state] ?? 0) + 1), n), {});
+  const playing = info.placed.filter((p) => p.state === "playing").length;
+  const slots = info.voices.length + playing;
   lines.push(c
     ? `오디오 ${c.state} · ${c.sampleRate} Hz · 지연(${c.latencyHint}) ${f(c.baseLatency * 1000, 1)}+${f((c.outputLatency ?? NaN) * 1000, 1)} ms · 비상관 ${info.diffuse ? "켬" : "끔"}`
     : "오디오 시작 전");
-  // 상호작용 패치는 항상 edit·player·event 세 개라 이름은 생략(줄이 길어지면 폭을 넘는다)
-  lines.push(`Pd main ${info.interaction.length}개 · 영역 슬롯 ${info.voices.length}개` +
+  lines.push(`Pd 슬롯 ${slots}개 = 사운드스케이프 ${info.voices.length} + 배치한 소리 ${playing}` +
     (info.voices.length ? ` (${Object.entries(byState).map(([s, n]) => `${s} ${n}`).join(", ")})` : ""));
   lines.push(`사운드스케이프 ${info.enabled ? (info.paused ? "일시정지" : "켜짐") : "꺼짐"}` +
     (info.soundscape ? ` · 등록 영역 ${info.soundscape.registered}개 · 반경 ${info.soundscape.options.radius} · 패닝 전환 ${info.soundscape.options.blend} · 최대 ${info.soundscape.options.max}` : ""));
@@ -101,11 +102,11 @@ function describe(info: GameAudioDebug, world: World, derivation: WorldDerivatio
     }
     const here = derivation.structures.filter((s) => Math.round(s.x) === tx && Math.round(s.z) === tz);
     if (here.length) lines.push(`구조물 ${here.map((s) => s.kind).join(", ")}`);
-    lines.push(`whistle-player  footed grass ${f(p.grass)} · water ${f(p.water)}`);
+    lines.push(`whistle-player  footed grass ${f(p.grass)} · water ${f(p.water)} · speed ${f(info.speed)} 칸/초`);
   }
 
   // 실행 중인 패치 전체(Pd 엔진 슬롯): 상호작용 패치 + 사운드스케이프 패치(이번 프레임에 고른 영역 + 꺼지는 중인 영역)
-  if (info.interaction.length || info.voices.length) {
+  if (info.interaction.length || info.voices.length || info.placed.length) {
     lines.push("");
     // 한글은 폭이 두 칸이라 열이 어긋나므로 머리글은 영문(거리 d, 음량 gain, 폭 width, 농도 amount)
     lines.push(`${pad("patch", 20)}${pad("id / bus", 16)}${pad("kind", 8)}${pad("d", 6)}${pad("gain", 6)}${pad("width", 6)}${pad("amount", 7)}state`);
@@ -123,6 +124,10 @@ function describe(info: GameAudioDebug, world: World, derivation: WorldDerivatio
         : pad("", 25);
       lines.push(`${pad(voice.patch, 20)}${pad(voice.id, 16)}${pad(kind, 8)}${values}${voice.state}`);
     }
+    // 배치한 소리: 슬롯 이름(vK)과 거리·음량(width·amount 대신 pan·재생 방식)
+    for (const p of info.placed)
+      lines.push(`${pad("placed_sound", 20)}${pad(p.slot, 16)}${pad("sound", 8)}${pad(f(p.distance), 6)}${pad(f(p.gain), 6)}` +
+        `${pad(f(p.pan), 6)}${pad(p.mode, 7)}${p.state}`);
   }
   return lines.join("\n");
 }

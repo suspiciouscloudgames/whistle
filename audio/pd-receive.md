@@ -8,12 +8,14 @@
 
 | 받는 이름 | 나누기 | 언제 오나 |
 |---|---|---|
-| `whistle-player` | `[route position yaw stat footed]` | 3D 플레이 중 약 0.08초마다(네 가지 모두) |
+| `whistle-player` | `[route position yaw stat footed speed]` | 3D 플레이 중 약 0.08초마다(다섯 가지 모두) |
 | `$1-whistle-region` | `[route amount distance]` | 영역 패치만. 켜질 때와 값이 바뀔 때 |
 | `whistle-edit` | `[unpack f f f s s s]` | 편집 화면에서 칸을 바꿀 때 |
 | `whistle-event` | `[route fallingstar rain]` | 게임 이벤트 켬 1 / 끔 0(3D 플레이 중) |
 | `whistle-board-height` | 숫자 하나 | UWB 테스트 페이지에서만 |
 | `whistle-player-stop` | bang | 3D 이동음을 끌 때(UWB 테스트 페이지 등). 다음 `whistle-player`부터 다시 소리를 내는 것은 패치가 한다 |
+| `whistle-sound-bank` | `<이름> <경로>` | `main.pd`의 `[pd sound_bank]` 전용. 업로드한 소리를 `[pd sounds]`의 `<이름>-L`·`<이름>-R` 배열로 읽는다(맵의 소리마다 한 번) |
+| `$1-whistle-sound` | `[route set distance]` | `placed_sound.pd` 전용. `set <이름>-L [<이름>-R]`(모노면 -L만, 열 때 한 번) · `distance <타일> <반경>` 플레이어까지 거리와 들리는 반경(열 때와 그 뒤 매 프레임). 지금 패치는 거리/반경을 `[moving_average 10]`으로 고른 뒤 재생 빠르기로 쓴다(가까우면 0.5배, 반쯤이면 1배, 가장자리 2배) |
 | `whistle-slot` | `[route on off]` | `main.pd` 전용. 영역 켜기 `on 번호 패치 이름 L R`, 끄기 `off 번호`([`main-pd.md`](main-pd.md)) |
 
 ## whistle-player (플레이어 상태)
@@ -30,6 +32,7 @@
 | `yaw` | `a` | 바라보는 방향(라디안). 0 = 북(−z), π/2 = 동(+x). 한 바퀴 돌아도 0으로 돌아가지 않고 계속 커지거나 작아진다 |
 | `stat` | `crouch run grounded falling` | 모두 0/1. 웅크림 · 달리기(지금은 켤 방법이 없어 늘 0) · 땅에 서 있음(점프·낙하·비행 중 0) · 구멍에 떨어지는 중 |
 | `footed` | `grass water` | 발밑. `grass` 0~1 발밑 풀 농도(칸 사이를 매끄럽게 섞은 값) · `water` 0/1 발이 물속(수면 아래)이면 1 |
+| `speed` | `v` | 땅 위에서 움직이는 빠르기(칸/초, 수평). 0.08초마다 위치 변화로 재고, 튀지 않게 앞 값과 절반씩 섞는다. 걷기 약 1.5, 서 있으면 0. 지금 쓰는 패치는 없다(paulstretch~ 시험 때 배율에 썼다) |
 
 편집 화면으로 돌아가거나 일시정지하면 보내지 않는다(마지막 값이 그대로 남는다).
 

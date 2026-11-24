@@ -125,6 +125,8 @@ test("surface attachment uses existing grass or bare ground without planting any
   await page.screenshot({ path: testInfo.outputPath("grass-surface-play.png") });
   await page.getByRole("button", { name: "만들기로 돌아가기", exact: true }).click();
   await page.reload();
+  await page.locator(".live-preview canvas").scrollIntoViewIfNeeded();
+  await expect(page.locator(".live-preview canvas")).toHaveAttribute("data-ready", "true", { timeout: 30_000 });
   await expect.poll(async () => (await grassSurfaceState(page)).textured).toBe(attached.textured);
   expect((await grassSurfaceState(page)).texture).toBe(saved.image);
   expect(errors).toEqual([]);

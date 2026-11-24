@@ -4,6 +4,7 @@ import { createInteractionSession, type EditSound, type GameEvent } from "@/lib/
 import { createGameAudio } from "@/lib/audio/game-audio";
 import { playerSound, type PlayerAudioFrame } from "@/lib/audio/game-parameters";
 import { createPlacedSounds } from "@/lib/audio/placed-sounds";
+import { createPdSounds } from "@/lib/audio/pd-sounds";
 import { openEngine, unlockAudio } from "@/lib/audio/pd-runtime";
 import { createSoundscape } from "@/lib/audio/soundscape";
 import { createGameSoundscape, type GameSoundscape } from "@/lib/audio/game-soundscape";
@@ -35,7 +36,7 @@ const tilesOf = (world: World) => world.terrain?.tiles ?? flatTiles.get(world.si
  * pd4web 엔진 1개(AudioContext도 엔진의 것. 페이지와 함께 계속 산다):
  *   상호작용 패치(edit·player·event) ─┐
  *   사운드스케이프(층별 영역 패치들) ──┼─→ 마스터 게인(음소거 fade) → 리미터 → 출력
- *   배치한 녹음 사운드 ───────────────┘
+ *   배치한 녹음 사운드(Pd 슬롯, 10배로 늘림) ┘
  */
 /** 소리 켜기를 이만큼(ms) 기다려도 안 되면 알린다(계속 기다리고, 다음 터치·키에서 켜진다: unlockAudio). */
 const RESUME_NOTICE_MS = 3000;
@@ -77,6 +78,8 @@ async function createGameMix(onBlocked: () => void) {
     log(`오디오 시작: ${context.sampleRate}Hz, 상호작용 패치 edit·player·event 준비됨 (${Math.round(performance.now() - started)}ms), 비상관 필터 ${diffuse ? "켬" : "끔"}, 지연 설정 ${hint} (${(context.baseLatency * 1000).toFixed(1)}ms)`);
     return {
       context, master: output, scape, diffuse, game: createGameSoundscape(scape, log),
+      // 배치한 소리: Pd 슬롯(placed_sound.pd)
+      playSound: createPdSounds(engine),
       session: {
         ...session,
         // whistle-gate 대신 전체 마스터 게인으로 음소거한다(상호작용·사운드스케이프·녹음 사운드 모두).
@@ -114,6 +117,10 @@ export type GameAudioDebug = {
   enabled: boolean;
   paused: boolean;
   frame: PlayerAudioFrame | null;
+  /** 플레이어 빠르기(칸/초, whistle-player speed) */
+  speed: number;
+  /** 배치한 소리(Pd 슬롯 placed_sound) */
+  placed: ReturnType<ReturnType<typeof createPlacedSounds>["snapshot"]>;
 };
 
 export function useGameAudio(notify: (message: string) => void) {
@@ -124,6 +131,8 @@ export function useGameAudio(notify: (message: string) => void) {
   const soundscape = useRef<GameSoundscape | null>(null);
   const mixRef = useRef<Awaited<ReturnType<typeof createGameMix>> | null>(null);
   const lastFrame = useRef<PlayerAudioFrame | null>(null);
+  /** 플레이어 빠르기(칸/초, 수평): 오디오 프레임(약 80ms) 사이 위치 변화로 잰다. 중단과 순간이동은 무시 */
+  const motion = useRef<{ x: number; z: number; time: number; speed: number } | null>(null);
   const enabled = useRef(false);
   const paused = useRef(false);
   const api = useMemo(() => {
@@ -132,7 +141,7 @@ export function useGameAudio(notify: (message: string) => void) {
       async () => {
         const mix = await createGameMix(failed);
         mixRef.current = mix;
-        recordings.current = createPlacedSounds(mix.context, () => {}, mix.master);
+        recordings.current = createPlacedSounds(mix.context, () => {}, mix.master, mix.playSound);
         soundscape.current = mix.game;
         return mix.session;
       },
@@ -140,13 +149,19 @@ export function useGameAudio(notify: (message: string) => void) {
     );
     const quiet = () => soundscape.current?.stop();
     return {
-      edit: (sound: EditSound) => { enabled.current = false; quiet(); recordings.current?.stop(); get().edit(sound); },
-      play: () => { enabled.current = true; paused.current = false; recordings.current?.stop(); get().play(); },
-      stop: () => { enabled.current = false; quiet(); recordings.current?.stop(); controller.current?.stop(); },
-      reset: () => { quiet(); recordings.current?.stop(); controller.current?.reset(); },
+      edit: (sound: EditSound) => { motion.current = null; enabled.current = false; quiet(); recordings.current?.stop(); get().edit(sound); },
+      play: () => { motion.current = null; enabled.current = true; paused.current = false; recordings.current?.stop(); get().play(); },
+      stop: () => { motion.current = null; enabled.current = false; quiet(); recordings.current?.stop(); controller.current?.stop(); },
+      reset: () => { motion.current = null; quiet(); recordings.current?.stop(); controller.current?.reset(); },
       movement: (frame: PlayerAudioFrame, world?: World, actors?: Actor[], derivation?: WorldDerivation) => {
         lastFrame.current = frame;
-        controller.current?.movement(playerSound(frame));
+        const now = performance.now(), last = motion.current;
+        const seconds = last ? (now - last.time) / 1000 : 0;
+        const measured = last && seconds > 0 && seconds < 1 ? Math.hypot(frame.x - last.x, frame.z - last.z) / seconds : 0;
+        // 프레임 간격이 고르지 않아 잰 값이 튄다. 앞 값과 절반씩 섞어 약하게 고른다(패치는 더 부드럽게 할 수 있다).
+        const speed = last && seconds > 0 && seconds < 1 && measured <= 8 ? last.speed * 0.5 + measured * 0.5 : 0;
+        motion.current = { x: frame.x, z: frame.z, time: now, speed };
+        controller.current?.movement({ ...playerSound(frame), speed });
         if (!enabled.current || paused.current || !world) return;
         controller.current?.event("rain", world.weather === "rain");
         controller.current?.event("fallingstar", !!frame.meteors);
@@ -171,6 +186,8 @@ export function useGameAudio(notify: (message: string) => void) {
           enabled: enabled.current,
           paused: paused.current,
           frame: lastFrame.current,
+          speed: motion.current?.speed ?? 0,
+          placed: recordings.current?.snapshot() ?? [],
         };
       },
       /** whistle-event <이름> 1/0 (fallingstar: 디버그 화면의 1 키. rain은 위 movement가 날씨로 보낸다) */
@@ -184,6 +201,7 @@ export function useGameAudio(notify: (message: string) => void) {
   }, []);
   useEffect(() => {
     const pause = () => {
+      motion.current = null;
       paused.current = true;
       soundscape.current?.stop();
       recordings.current?.stop(false);
