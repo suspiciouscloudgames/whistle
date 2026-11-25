@@ -67,6 +67,9 @@ test("walking and jumping stop at void edges but an authored hole still causes f
   await expect(canvas).not.toHaveAttribute("data-motion", "fall");
   await page.keyboard.up("KeyW");
   await page.screenshot({ path: testInfo.outputPath("floating-play.png") });
+  await page.keyboard.down("KeyS");
+  try { await expect.poll(async () => Number(await canvas.getAttribute("data-player-z"))).toBeGreaterThan(world.start.z - .2); }
+  finally { await page.keyboard.up("KeyS"); }
   await page.keyboard.press("Escape");
   const next = (world.start.z - 1) * world.size + world.start.x;
   const cell = page.locator(`[data-cell="${next}"]`);

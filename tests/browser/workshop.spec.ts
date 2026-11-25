@@ -105,7 +105,7 @@ test("one-minute turns lock placement, keep editors open and deliver before meet
     await b.locator('[data-cell="0"]').click();await expect(b.getByText(hint,{exact:true})).toBeVisible();
     expect((await savedWorld(b)).terrain!.tiles[0].void).toBe(true);
     await title(b,"기다리며 쓰는 제목");
-    await expect(b.locator('.toast')).not.toContainText("데이터");
+    await expect(b.locator('.toast').filter({hasText:"데이터"})).toHaveCount(0);
     await a.getByRole("button",{name:"바닥",exact:true}).click();await a.locator('[data-cell="0"]').click();
     await a.getByRole("button",{name:"장면 제목 편집",exact:true}).click();
     await a.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("차례가 바뀌어도 남은 초안");

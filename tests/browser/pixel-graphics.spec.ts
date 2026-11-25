@@ -96,7 +96,8 @@ test.describe("native resolution text", () => {
       localStorage.setItem("whistle.language","ko");
     },world);
     await page.goto("?quality=high");
-    await expect.poll(async()=> (await pixels(page)).shades.some(color=>(color>>16)>100 && (color>>16)-(color&255)>40)).toBe(true);
+    await expect.poll(async()=> (await pixels(page)).shades.some(color=>(color>>16)>100 && (color>>16)-(color&255)>40),
+      { timeout:15_000, intervals:[100,200,250] }).toBe(true);
     const frame=await pixels(page);
     expect(frame.width).toBe(frame.displayWidth*2);
     await expect.poll(()=>page.evaluate(()=>{

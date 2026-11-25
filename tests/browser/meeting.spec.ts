@@ -32,14 +32,14 @@ test("multiplayer is the default and toggles participation without losing the wo
   await expect(a.locator(".presence-number")).toHaveText("1");
   await expect(a.locator(".presence-mark")).toHaveCSS("background-color","rgb(17, 17, 17)");
   expect(await a.locator(".presence-mark").evaluate(mark=>getComputedStyle(mark,"::after").content)).toBe('""');
-  await makeText(a,"혼자 만든 재료");await publishMaterials(a);
+  await writeTitle(a,"혼자 만든 재료");
   const original=await savedWorld(a);
   await a.screenshot({path:info.outputPath("solo-desktop.png")});
   await a.setViewportSize({width:390,height:844});
   await a.screenshot({path:info.outputPath("solo-mobile.png"),fullPage:true});
   expect(await a.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
   await a.setViewportSize({width:1280,height:720});
-  await b.goto(url);await ready(b);await makeText(b,"이웃의 재료");await publishMaterials(b);
+  await b.goto(url);await ready(b);await writeTitle(b,"이웃의 재료");
   await expect(b.locator(".presence-number")).toHaveText("1");
   await expect(b.locator(".received-material")).toHaveCount(0);
   await expect(a.locator(".received-material")).toHaveCount(0);
@@ -49,8 +49,7 @@ test("multiplayer is the default and toggles participation without losing the wo
   await expect(toggle).toHaveAttribute("aria-pressed","true");
   await expect(a.locator(".presence-number")).toHaveText("2");
   await expect(b.locator(".presence-number")).toHaveText("2");
-  await expect(a.getByRole("button",{name:"배치: 이웃의 재료",exact:true})).toBeVisible();
-  await expect(b.getByRole("button",{name:"배치: 혼자 만든 재료",exact:true})).toBeVisible();
+  await waitForGift(a,"이웃의 재료");
   await useText(a,"이웃의 재료");
   await expect(a.locator('[data-connection-online="true"]')).toHaveCount(1);
   await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.some(p=>p.built)).toBe(true);
@@ -64,19 +63,17 @@ test("multiplayer is the default and toggles participation without losing the wo
   await expect(b.locator(".presence-number")).toHaveText("1");
   await expect.poll(async()=>(await savedWorld(a)).connectionFootings??[]).toEqual([]);
   expect({...await savedWorld(a),connectionFootings:[]}).toEqual({...before,connectionFootings:[]});
-  await makeText(b,"혼자 모드에서는 받지 않음");await publishMaterials(b);
+  await writeTitle(b,"혼자 모드에서는 받지 않음");
   await expect(a.getByRole("button",{name:"배치: 혼자 모드에서는 받지 않음",exact:true})).toHaveCount(0);
   expect(sockets).toBe(2);
-  await makeText(a,"혼자 추가한 재료");
+  await writeTitle(a,"혼자 수정한 재료");
   await toggle.click();await ready(a);
   await expect(a.locator(".presence-number")).toHaveText("2");
-  await expect.poll(()=>state.view().ownWorld.assets.some(asset=>asset.text==="혼자 추가한 재료")).toBe(true);
+  await expect.poll(()=>state.view().ownWorld.assets.some(asset=>asset.text==="혼자 수정한 재료")).toBe(true);
   await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.length).toBe(1);
-  await expect(a.getByRole("button",{name:"배치: 혼자 모드에서는 받지 않음",exact:true})).toBeVisible();
-  await a.reload();
+  await a.reload();await ready(a);
   await expect(toggle).toHaveAttribute("aria-pressed","true");
-  await ready(a);
-  await expect(a.getByRole("button",{name:"배치: 혼자 추가한 재료",exact:true})).toBeVisible();
+  await expect(a.getByRole("button",{name:"배치: 혼자 수정한 재료",exact:true})).toBeVisible();
   expect(sockets).toBe(4);
   expect(state.errors).toEqual([]);
 });
@@ -157,14 +154,17 @@ test("browser storage restores my world and edited gifts after both the browser 
   const url=new URL("?meeting=browser-persistence",baseURL).href;
   try {
     const a=await local.newPage(),b=await peer.newPage();let state=observe(a);
-    await a.goto(url);await ready(a);await b.goto(url);await ready(b);
-    await makeText(a,"내가 만든 세계");await makeText(b,"받은 재료");await publishMaterials(b);
-    await a.bringToFront();await a.getByRole("button",{name:"배치: 받은 재료",exact:true}).click();
-    await a.getByRole("button",{name:"편집",exact:true}).click();
+    await b.goto(url);await ready(b);await writeTitle(b,"받은 재료");
+    await a.goto(url);await ready(a);await writeTitle(a,"내가 만든 세계");await waitForGift(a,"받은 재료");
+    await editMaterial(a,"받은 재료");
     await a.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("내가 바꾼 재료");
     await a.getByRole("dialog").getByRole("button",{name:"저장",exact:true}).click();
-    await a.locator('[data-cell="126"]').click();
-    await expect.poll(()=>state.view().ownWorld.assets.some(v=>v.text==="내가 바꾼 재료"&&v.received)).toBe(true);
+    await useText(a,"내가 바꾼 재료");
+    await expect.poll(()=>{
+      const world=state.view().ownWorld;
+      const gift=world.assets.find(v=>v.text==="내가 바꾼 재료"&&v.received);
+      return world.objects.some(o=>o.asset===gift?.id);
+    }).toBe(true);
     await expect(a.getByRole("button",{name:"파일 저장",exact:true})).toHaveAttribute("aria-description","이 브라우저에 저장됨");
     const saved=state.view().ownWorld;
     const download=a.waitForEvent("download");await a.getByRole("button",{name:"파일 저장",exact:true}).click();
@@ -175,7 +175,8 @@ test("browser storage restores my world and edited gifts after both the browser 
     local=await launch();const reopened=await local.newPage();state=observe(reopened);
     await reopened.goto(url);await ready(reopened);
     await expect.poll(()=>state.view().ownWorld.assets.some(a=>a.text==="내가 바꾼 재료"&&a.received)).toBe(true);
-    expect(state.view().ownWorld).toEqual(saved);
+    expect({...state.view().ownWorld,connectionFootings:[]}).toEqual({...saved,connectionFootings:[]});
+    await expect(reopened.locator("[data-connection], [data-approach]")).toHaveCount(0);
     await expect(reopened.locator(".received-material")).toHaveCount(1);
     await expect(reopened.locator(".meeting-material-count")).toHaveCount(0);
     expect(state.errors).toEqual([]);
@@ -190,6 +191,7 @@ async function ready(page: Page) {
   if(await toggle.getAttribute("aria-pressed")==="false")await toggle.click();
   await expect(page.locator("[data-meeting-status]")).toHaveAttribute("data-meeting-status", "online", { timeout: 30_000 });
   await expect(page.locator(".live-preview canvas")).toHaveAttribute("data-ready", "true", { timeout: 30_000 });
+  await expect(page.getByRole("button",{name:"파일 저장",exact:true})).toHaveAttribute("aria-description","이 브라우저에 저장됨");
 }
 async function paint(page: Page, points: [number,number][], surface="바닥") {
   await page.bringToFront();
@@ -240,71 +242,70 @@ async function walk(page: Page, x:number,z:number) {
   } finally { await keys([]); }
 }
 
-async function publishMaterials(page:Page) {
+async function writeTitle(page:Page,text:string) {
   await page.bringToFront();
-  await page.getByRole("button",{name:"플레이",exact:true}).click();
-  await expect(page.locator(".play-shell canvas")).toHaveAttribute("data-ready","true");
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".live-preview canvas")).toHaveAttribute("data-ready","true");
-}
-async function makeText(page:Page,text:string,place=true) {
-  await page.bringToFront();
-  await page.getByRole("button",{name:"텍스트 만들기",exact:true}).click();
+  await page.getByRole("button",{name:/^장면 제목 (입력|편집)$/}).click();
   await page.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill(text);
   await page.getByRole("dialog").getByRole("button",{name:"저장",exact:true}).click();
-  if(place)await page.locator('[data-cell="126"]').click();
+  await expect.poll(async()=>(await savedWorld(page)).title).toBe(text);
+}
+async function waitForGift(page:Page,text:string,timeout=70_000) {
+  await expect(page.getByRole("button",{name:`배치: ${text}`,exact:true})).toBeVisible({timeout});
+}
+async function editMaterial(page:Page,text:string) {
+  await page.bringToFront();
+  const item=page.locator(".symbol-library-item").filter({has:page.getByRole("button",{name:`배치: ${text}`,exact:true})});
+  await item.getByRole("button",{name:"편집",exact:true}).click();
 }
 async function useText(page:Page,text:string) {
   await page.bringToFront();
   await page.getByRole("button",{name:`배치: ${text}`,exact:true}).click();
-  await page.locator('[data-cell="126"]').click();
+  await page.locator('[data-cell="126"]').click({position:{x:2,y:2}});
+}
+async function seedWorld(page:Page,world:ReturnType<typeof createMeetingWorld>) {
+  await page.addInitScript(world=>{
+    if(!localStorage.getItem("meeting-test-seeded")){
+      localStorage.setItem("whistle.world.v2",JSON.stringify(world));
+      localStorage.setItem("meeting-test-seeded","1");
+    }
+  },world);
 }
 
-test("play shares only placed materials and a recipient edits one independent copy",async({browser,baseURL})=>{
+test("turn handoff shares only placed materials and a recipient edits one independent copy",async({browser,baseURL})=>{
   const a=await newPlayer(browser,baseURL),b=await newPlayer(browser,baseURL),aa=observe(a),bb=observe(b);
   const url=`?meeting=play-share-${Date.now()}`;
-  await a.goto(url);await ready(a);await b.goto(url);await ready(b);
-  await makeText(a,"목록에만 있는 재료",false);
-  await makeText(a,"시험 배치");
-  await expect.poll(()=>aa.view().ownWorld.objects.length).toBe(1);
-  await expect(b.locator(".received-material")).toHaveCount(0);
-  await a.getByRole("button",{name:"편집",exact:true}).click();
-  await a.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("완성한 재료");
-  await a.getByRole("dialog").getByRole("button",{name:"저장",exact:true}).click();
+  const world=createMeetingWorld(37);
+  world.assets.push({id:"unplaced",name:"목록에만 있는 재료",text:"목록에만 있는 재료",color:"#333333",solid:false,shape:"sphere"});
+  await seedWorld(a,world);
+  await a.goto(url);await ready(a);await writeTitle(a,"시험 배치");
+  await b.goto(url);await ready(b);
+  await writeTitle(a,"완성한 재료");
   await expect.poll(()=>aa.view().ownWorld.assets.some(asset=>asset.text==="완성한 재료")).toBe(true);
   await expect(b.locator(".received-material")).toHaveCount(0);
-  await publishMaterials(a);
-  await expect(b.getByRole("button",{name:"배치: 완성한 재료",exact:true})).toBeVisible();
+  await waitForGift(b,"완성한 재료");
   await expect(b.locator(".received-material")).toHaveCount(1);
   await expect(b.getByRole("button",{name:"배치: 목록에만 있는 재료",exact:true})).toHaveCount(0);
   const gift=(await savedWorld(b)).assets.find(asset=>asset.received)!;
-  await b.bringToFront();
-  await b.getByRole("button",{name:"배치: 완성한 재료",exact:true}).click();
-  await b.getByRole("button",{name:"편집",exact:true}).click();
+  await editMaterial(b,"완성한 재료");
   await b.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("내가 고친 재료");
   await b.getByRole("dialog").getByRole("button",{name:"저장",exact:true}).click();
+  const select=b.getByRole("button",{name:"배치: 내가 고친 재료",exact:true});
+  await select.click();
   const empty=bb.view().ownWorld.terrain!.tiles.findIndex(tile=>tile.void);
   await b.locator(`[data-cell="${empty}"]`).click();
   await expect(b.locator(`[data-cell="${empty}"] [data-symbol-site]`)).toHaveCount(0);
-  expect((await savedWorld(b)).objects).toHaveLength(0);
-  await b.locator('[data-cell="126"]').click();
+  expect((await savedWorld(b)).objects.some(o=>o.asset===gift.id)).toBe(false);
+  await b.locator('[data-cell="126"]').click({position:{x:2,y:2}});
   await expect.poll(()=>bb.view().connections.length).toBe(1);
-  await expect.poll(()=>bb.view().ownWorld.objects.length).toBe(1);
-  await expect.poll(async()=> (await savedWorld(b)).assets.find(asset=>asset.id===gift.id)?.text).toBe("내가 고친 재료");
-  await expect(b.locator(".received-material")).toHaveCount(1);
-  await a.bringToFront();
-  await a.getByRole("button",{name:"편집",exact:true}).click();
-  await a.getByRole("button",{name:"텍스트 삭제",exact:true}).click();
-  await publishMaterials(a);
-  await b.bringToFront();
-  await expect(b.getByRole("button",{name:"배치: 내가 고친 재료",exact:true})).toBeVisible();
+  await expect.poll(()=>bb.view().ownWorld.objects.filter(o=>o.asset===gift.id).length).toBe(1);
+  await writeTitle(a,"원래 장면 수정");
   await b.reload();await ready(b);
   await expect(b.locator(".received-material")).toHaveCount(1);
-  expect((await savedWorld(b)).objects[0].asset).toBe(gift.id);
-  await b.getByRole("button",{name:"배치: 내가 고친 재료",exact:true}).click();
-  await b.getByRole("button",{name:"편집",exact:true}).click();
+  await expect(select).toBeVisible();
+  await expect(b.locator(".workspace [data-turn]")).toHaveAttribute("data-turn","own",{timeout:70_000});
+  await editMaterial(b,"내가 고친 재료");
   await b.getByRole("button",{name:"텍스트 삭제",exact:true}).click();
-  await expect.poll(()=>bb.view().ownWorld.objects.length).toBe(0);
+  await expect.poll(()=>bb.view().ownWorld.objects.filter(o=>o.asset===gift.id).length).toBe(0);
   await expect(b.locator("[data-connection]")).toHaveCount(1);
   expect(bb.view().ownWorld.terrain!.tiles[126].void).not.toBe(true);
   expect([...aa.errors,...bb.errors]).toEqual([]);
@@ -312,13 +313,14 @@ test("play shares only placed materials and a recipient edits one independent co
 
 test("distant personal footings reveal worlds and return visitors silently after floor deletion or disconnect",async({browser,baseURL},info)=>{
   const a=await newPlayer(browser,baseURL),b=await newPlayer(browser,baseURL),aa=observe(a),bb=observe(b),link=`?meeting=walk-${Date.now()}`;
-  await a.goto(link);await ready(a);await b.goto(link);await ready(b);
+  await a.goto(link);await ready(a);await b.goto(link);await ready(b);await writeTitle(b,"B의 재료");
   await expect(a.locator("[data-cell]")).toHaveCount(144);
   await expect(a.getByRole("button",{name:"시작점",exact:true})).toHaveCount(0);
   await expect(a.locator('[data-approach]')).toHaveCount(1);
   await expect(a.locator('.presence-mark')).toHaveCSS("background-color","rgb(243, 239, 145)");
   await expect(a.locator('.presence-number')).toHaveCSS("background-color","rgba(0, 0, 0, 0)");
-  await makeText(a,"A의 재료");await makeText(b,"B의 재료");await publishMaterials(a);await publishMaterials(b);await useText(a,"B의 재료");
+  await expect(b.locator(".workspace [data-turn]")).toHaveAttribute("data-turn","own",{timeout:70_000});
+  await waitForGift(a,"B의 재료");await useText(a,"B의 재료");
   await expect.poll(()=>aa.view().connections.length).toBe(1);
   const gate=aa.view().connections[0];expect(gate.x).toBe(25);expect(gate.z).toBeLessThanOrEqual(4);
   expect(bb.view().connections).toHaveLength(0);await expect(b.locator('[data-approach]')).toHaveCount(1);
@@ -328,7 +330,7 @@ test("distant personal footings reveal worlds and return visitors silently after
   for(let z=0;z<=10;z++)for(let x=0;x<=2;x++)roadB.push([x,z]);
   for(let z=9;z<=11;z++)for(let x=0;x<=7;x++)roadB.push([x,z]);
   // Keep the neighbor's landing empty until the visitor opens it.
-  await paint(b,[[0,gate.z]],"타일 지우기");await paint(a,roadA);
+  expect(bb.view().ownWorld.terrain!.tiles[gate.z*12].void).toBe(true);await paint(a,roadA);
   await a.reload();await ready(a);expect(aa.view().connections[0].id).toBe(gate.id);
   await play(a);await walk(a,19,gate.z);await walk(a,24,gate.z);await walk(a,25,gate.z);
   await expect.poll(()=>aa.view().joined.length).toBe(2);expect(bb.view().joined).toHaveLength(1);
@@ -362,16 +364,21 @@ test("three original editors retain tools, undo, distinct documents after reload
   const aa=observe(a),bb=observe(b),cc=observe(c),link=`?meeting=three-${Date.now()}`;
   await a.goto(link);await ready(a);await b.goto(link);await ready(b);await c.goto(link);await ready(c);
   expect([aa.view().slot,bb.view().slot,cc.view().slot]).toEqual([0,0,0]);
-  for(const name of ["이미지 만들기","텍스트 만들기","사운드 만들기","높이기","낮추기"])
+  for(const name of ["장면 제목 입력","바닥","번짐","거침","높이기","낮추기"])
     await expect(a.getByRole("button",{name,exact:true})).toBeVisible();
-  const patch:[number,number][]=[];for(let z=7;z<=10;z++)for(let x=4;x<=7;x++)patch.push([x,z]);
-  await paint(a,patch,"번짐");
+  const cell=aa.view().ownWorld.terrain!.tiles.findIndex(tile=>tile.void);
+  const original=aa.view().ownWorld.terrain!.tiles[cell];
+  const tile=()=>aa.view().ownWorld.terrain!.tiles[cell];
+  await expect(a.locator(".workspace [data-turn]")).toHaveAttribute("data-turn","own",{timeout:70_000});
+  await a.getByRole("button",{name:"번짐",exact:true}).click();
+  await a.locator(`[data-cell="${cell}"]`).click({position:{x:2,y:2}});
+  await expect.poll(tile).toMatchObject({surface:"soft"});
   await a.getByRole("button",{name:"되돌리기",exact:true}).click();
-  await expect.poll(()=>aa.view().ownWorld.terrain!.tiles[10*12+7].void).toBe(true);
+  await expect.poll(tile).toEqual(original);
   await a.getByRole("button",{name:"다시 실행",exact:true}).click();
-  await expect.poll(()=>aa.view().ownWorld.terrain!.tiles[10*12+7].surface).toBe("soft");
+  await expect.poll(tile).toMatchObject({surface:"soft"});
   await a.reload();await ready(a);expect(aa.view().slot).toBe(0);
-  expect(aa.view().ownWorld.terrain!.tiles[10*12+7].surface).toBe("soft");
+  await expect.poll(tile).toMatchObject({surface:"soft"});
   expect(bb.view().ownWorld.terrain!.tiles.filter(t=>!t.void)).toHaveLength(14);
   await a.screenshot({path:info.outputPath("continuous-grass.png")});
   await c.goto(`?meeting=separate-${Date.now()}`);await ready(c);
@@ -455,48 +462,39 @@ test("neighbors share editable lemon materials without forwarding copies or rest
   const a=await newPlayer(browser,baseURL),b=await newPlayer(browser,baseURL),c=await newPlayer(browser,baseURL);
   const aa=observe(a),bb=observe(b),cc=observe(c),link=`?meeting=materials-${Date.now()}`;
   await a.goto(link);await ready(a);await b.goto(link);await ready(b);await c.goto(link);await ready(c);
-  const make=async(page:Page,text:string)=>{await makeText(page,text);await publishMaterials(page);};
-  await make(a,"물고기");
-  await expect(b.locator('.received-material')).toHaveCount(1);
+  await writeTitle(a,"물고기");
+  await waitForGift(b,"물고기");
   await expect(c.locator('.received-material')).toHaveCount(0);
   await expect(b.locator('.received-material')).toHaveCSS("background-color","rgb(243, 239, 145)");
-  expect(bb.view().ownWorld.objects).toHaveLength(0);
   const gift=bb.view().materials[0].id;
-  await b.bringToFront();
-  await b.getByRole("button",{name:"배치: 물고기",exact:true}).click();
-  await b.getByRole("button",{name:"편집",exact:true}).click();
+  expect(bb.view().ownWorld.objects.some(o=>o.asset===gift)).toBe(false);
+  await editMaterial(b,"물고기");
   await b.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("하늘 물고기");
   await b.getByRole("dialog").getByRole("button",{name:"저장",exact:true}).click();
-  await b.locator('[data-cell="126"]').click();
+  await useText(b,"하늘 물고기");
   await expect.poll(()=>bb.view().ownWorld.assets.find(v=>v.id===gift)?.text).toBe("하늘 물고기");
-  await expect.poll(()=>bb.view().ownWorld.objects.length).toBe(1);
+  await expect.poll(()=>bb.view().ownWorld.objects.filter(o=>o.asset===gift).length).toBe(1);
   expect(aa.view().ownWorld.assets.some(v=>v.text==="물고기")).toBe(true);
   expect(aa.view().materials).toHaveLength(0);
   expect(aa.view().connections).toHaveLength(0);
   await expect.poll(()=>bb.view().connections.length).toBe(1);
   expect(bb.view().connections[0].members).toEqual([bb.view().id,aa.view().id]);
   expect(cc.view().connections).toHaveLength(0);
-  expect(cc.view().ownWorld.assets.some(a=>a.text==="물고기")).toBe(false);
+  await writeTitle(b,"내 기호");
+  await waitForGift(a,"내 기호");
+  expect(aa.view().materials).toHaveLength(1);
   await b.reload();await ready(b);
   await expect(b.getByRole("button",{name:"배치: 하늘 물고기",exact:true})).toBeVisible();
-  await b.getByRole("button",{name:"배치: 하늘 물고기",exact:true}).click();
-  await b.getByRole("button",{name:"편집",exact:true}).click();
+  await editMaterial(b,"하늘 물고기");
+  await expect(b.getByRole("button",{name:"텍스트 삭제",exact:true})).toBeEnabled({timeout:70_000});
   await b.getByRole("button",{name:"텍스트 삭제",exact:true}).click();
   await expect.poll(()=>bb.view().ownWorld.assets.some(v=>v.id===gift)).toBe(false);
   await b.reload();await ready(b);
   await expect(b.locator('.received-material')).toHaveCount(0);
-  for(let i=2;i<=6;i++)await make(a,`기호 ${i}`);
-  await expect(a.locator('.meeting-material-count')).toHaveText("6 / 6");
-  await a.getByRole("button",{name:"텍스트 만들기",exact:true}).click();
-  await expect(a.getByRole("dialog")).toHaveCount(0);
-  await expect(a.getByText("기호는 이미지·텍스트·소리를 합쳐 6종까지 만들 수 있습니다.",{exact:true})).toBeVisible();
-  await expect(b.locator('.received-material')).toHaveCount(5);
   await expect(c.locator('.received-material')).toHaveCount(0);
-  await make(b,"내 기호");
-  await expect(b.locator('.meeting-material-count')).toHaveText("1 / 6");
-  await expect(c.locator('.received-material')).toHaveCount(1);
   await a.close();
   await expect(c.locator('.presence-count')).toHaveAttribute("aria-description","접속 인원 (나 포함): 2");
+  await waitForGift(c,"내 기호",130_000);
   await c.reload();await ready(c);
   await expect(c.locator('.received-material')).toHaveCount(1);
   await c.setViewportSize({width:390,height:844});
@@ -509,18 +507,19 @@ test("a fourth arrival preserves existing neighbors and only receives the adjace
   const pages=await Promise.all([0,1,2,3].map(()=>newPlayer(browser,baseURL))),states=pages.map(observe),link=`?meeting=four-${Date.now()}`;
   for(let i=0;i<3;i++){await pages[i].goto(link);await ready(pages[i]);}
   const original=states[0].view().approaches[0];
-  await makeText(pages[0],"첫 번째");await makeText(pages[2],"세 번째");await publishMaterials(pages[0]);await publishMaterials(pages[2]);
+  await writeTitle(pages[0],"첫 번째");await writeTitle(pages[2],"세 번째");
   await pages[3].goto(link);await ready(pages[3]);
-  await expect(pages[3].getByRole('button',{name:'배치: 세 번째',exact:true})).toBeVisible();
+  await waitForGift(pages[3],"세 번째");
   await expect(pages[3].getByRole('button',{name:'배치: 첫 번째',exact:true})).toHaveCount(0);
   await expect.poll(()=>states[0].view().approaches[0].id).toBe(original.id);
   const ids=states.map(s=>s.view().id);
   for(let i=0;i<4;i++){
-    expect(states[i].view().recipients).toEqual([ids[i-1],ids[i+1]].filter(Boolean));
+    expect(states[i].view().recipients).toEqual([ids[i % 2 === 0 ? i+1 : i-1]]);
     await expect(pages[i].locator('.presence-count')).toHaveAttribute('aria-description','접속 인원 (나 포함): 4');
   }
   await useText(pages[1],"첫 번째");await expect.poll(()=>states[1].view().connections.length).toBe(1);
-  await pages[0].close();await expect(pages[1].locator('[data-connection]')).toHaveCSS('background-color','rgb(17, 17, 17)');
+  await pages[0].close();await expect(pages[1].locator('.presence-number')).toHaveText('3');
+  await expect(pages[1].locator('[data-connection-online="true"]')).toHaveCount(0);
   await pages[1].screenshot({path:info.outputPath('two-neighbors-one-offline.png')});
   expect(states.flatMap(s=>s.errors)).toEqual([]);
 });

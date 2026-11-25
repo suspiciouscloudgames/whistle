@@ -1,7 +1,7 @@
 # Whistle
 
 - 2D 격자 편집 → 3D 탐색 · pd4web 사운드
-- [브라우저에서 열기](https://suspiciouscloudgames.github.io/whistle/)
+- [브라우저에서 열기](https://playwhistle.onrender.com)
 
 ## 실행
 

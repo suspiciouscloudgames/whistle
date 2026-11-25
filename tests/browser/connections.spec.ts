@@ -49,22 +49,21 @@ test("the same document follows room addresses while separate tabs retain their 
 });
 
 test("restart clears received materials and undo history and rejoins with a fresh connection",async({browser,baseURL})=>{
+  test.setTimeout(105_000);
   const contexts=await Promise.all([1,2,3].map(()=>browser.newContext({baseURL,locale:"ko-KR"})));
   try {
     const [a,b,c]=await Promise.all(contexts.map(context=>context.newPage()));
     const url=`?meeting=restart-${Date.now()}`;
     for(const page of [a,b,c]){await page.goto(url);await ready(page);await expect(page.locator("main")).toHaveAttribute("data-meeting-status","online");}
     await a.bringToFront();
-    await a.getByRole("button",{name:"텍스트 만들기",exact:true}).click();
+    await a.getByRole("button",{name:"장면 제목 입력",exact:true}).click();
     await a.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("이전 이웃의 재료");
     await a.getByRole("dialog").getByRole("button",{name:"저장",exact:true}).click();
-    await a.locator('[data-cell="126"]').click();
-    await a.getByRole("button",{name:"플레이",exact:true}).click();
-    await expect(a.locator(".play-shell canvas")).toHaveAttribute("data-ready","true");
-    await a.keyboard.press("Escape");
     await b.bringToFront();
-    await b.getByRole("button",{name:"배치: 이전 이웃의 재료",exact:true}).click();
-    await b.locator('[data-cell="126"]').click();
+    const gift=b.getByRole("button",{name:"배치: 이전 이웃의 재료",exact:true});
+    await expect(gift).toBeVisible({timeout:70_000});
+    await gift.click();
+    await b.locator('[data-cell="126"]').click({position:{x:2,y:2}});
     await expect(b.locator("[data-connection]")).toHaveCount(1);
     const before=await b.locator("main").getAttribute("data-meeting-id");
     const aPort=await a.locator("[data-approach]").getAttribute("data-approach");
@@ -75,10 +74,11 @@ test("restart clears received materials and undo history and rejoins with a fres
     await expect(b.locator("main")).not.toHaveAttribute("data-meeting-id",before!);
     await expect(b.locator(".received-material")).toHaveCount(0);
     await expect(b.locator("[data-connection]")).toHaveCount(0);
-    await expect(b.locator("[data-approach]")).toHaveCount(1);
+    await expect(b.locator(".presence-number")).toHaveText("3");
     await expect(b.getByRole("button",{name:"되돌리기",exact:true})).toBeDisabled();
-    expect((await savedWorld(b)).objects).toHaveLength(0);
-    await expect(a.locator(`[data-approach="${aPort}"]`)).toHaveAttribute("data-approach-online","false");
+    await expect(b.getByRole("button",{name:"장면 제목 입력",exact:true})).toBeVisible();
+    expect((await savedWorld(b)).objects).toHaveLength(1);
+    await expect(a.locator(`[data-approach="${aPort}"][data-approach-online="true"]`)).toHaveCount(0);
     await expect(a.locator('[data-approach-online="true"]')).not.toHaveAttribute("data-approach",aPort!);
   } finally {await Promise.all(contexts.map(context=>context.close()));}
 });

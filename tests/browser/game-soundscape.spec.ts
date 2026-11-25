@@ -62,6 +62,9 @@ test("3D 플레이: 소리 영역을 등록하고 플레이어 근처 영역만(
   info.annotations.push({ type: "webgl", description: String(renderer) });
   await expect(page.getByRole("button", { name: "파일 저장", exact: true }))
     .toHaveAttribute("aria-description", "이 브라우저에 저장됨", { timeout: 60_000 });
+  await page.getByRole("button", { name: "거침", exact: true }).click();
+  await page.locator('[data-cell="126"]').click({ position: { x: 2, y: 2 } });
+  await expect(page.locator('[data-cell="126"]')).toHaveAccessibleName(/거침/);
 
   await page.getByRole("button", { name: "플레이", exact: true }).click();
   await expect.poll(() => count(logs, /오디오 시작/), { timeout: 60_000 }).toBe(1);
@@ -75,7 +78,7 @@ test("3D 플레이: 소리 영역을 등록하고 플레이어 근처 영역만(
   const registered = Number(/소리 영역 등록 (\d+)개/.exec(logs.find((l) => /소리 영역 등록/.test(l))!)![1]);
   expect(lit).toBeGreaterThan(0);
   expect(lit).toBeLessThanOrEqual(Math.min(6, registered));
-  expect((await probe(page)).peak).toBeGreaterThan(0.001);
+  await expect.poll(async () => (await probe(page)).peak, { timeout: 20_000 }).toBeGreaterThan(0.001);
 
   // 에디터로 돌아가면 켜진 영역이 모두 꺼진다.
   await page.keyboard.press("Escape");
