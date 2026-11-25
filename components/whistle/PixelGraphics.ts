@@ -89,7 +89,8 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
           const preserve = color;
           const previous = surface.onBeforeCompile;
           const key = surface.customProgramCacheKey();
-          surface.customProgramCacheKey = () => key + "|pixel-mrt";
+          const structure = object.name === "abstract-ladders" || object.name === "lightweight-structures";
+          surface.customProgramCacheKey = () => key + (structure ? "|pixel-mrt-structure" : "|pixel-mrt");
           surface.onBeforeCompile = (shader, gl) => {
             previous.call(surface, shader, gl);
             shader.uniforms.pixelKeepColor = preserve.color;
@@ -237,9 +238,9 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
                   gl_FragColor.rgb*=clamp(pixelLinear(imageTone)/imageLuma,.45,1.8);
                 }
               ` : ""}
-              ${object.name === "abstract-ladders" ? `
-                float ladderLight=mix(.16+smoothstep(.004,.42,surfaceLight)*.32,mix(.48,surfaceLight,.74),pixelDaylight);
-                gl_FragColor.rgb=vec3(pixelLinear(pixelTone(ladderLight,dotThreshold,detailFade)));
+              ${structure ? `
+                float structureLight=mix(.16+smoothstep(.004,.42,surfaceLight)*.32,mix(.48,surfaceLight,.74),pixelDaylight);
+                gl_FragColor.rgb=vec3(pixelLinear(pixelTone(structureLight,dotThreshold,detailFade)));
               ` : ""}
               ${object.name === "world-horizon" ? `gl_FragColor.rgb=vec3(pixelLinear(pixelHorizon(pixelDaylight)));` : ""}
               pixelMask = vec4(sourceCoverage, pixelSurfaceDetail * (1.0-sourceCoverage), pixelSoftSurface * (1.0-sourceCoverage), gl_FragColor.a);

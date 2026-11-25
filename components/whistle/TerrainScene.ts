@@ -36,7 +36,7 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
     group.add(bottom);
   }
 
-  const foundationDepth = 0.35;
+  const railWidth = 0.04, rungWidth = 0.065, rungHeight = 0.035;
   const architecture: {
     x: number;
     y: number;
@@ -64,9 +64,9 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
           x: toScene(gx),
           z: toScene(gz),
           y: terrainSample(world,gx,gz).height+.07,
-          w: s.dx ? .065 : .5,
-          d: s.dz ? .065 : .5,
-          h: .035,
+          w: s.dx ? rungWidth : .5,
+          d: s.dz ? rungWidth : .5,
+          h: rungHeight,
           ladder: true,
         });
         for (const side of [-1,1]) {
@@ -76,29 +76,50 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
           };
           const a=railPoint(step/rungCount), b=railPoint((step+1)/rungCount);
           const rail=b.clone().sub(a), center=a.clone().add(b).multiplyScalar(.5);
-          architecture.push({x:center.x,y:center.y,z:center.z,w:.04,h:rail.length()+.012,d:.04,
+          architecture.push({x:center.x,y:center.y,z:center.z,w:railWidth,h:rail.length()+.012,d:railWidth,
             rotation:new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),rail.normalize()),ladder:true});
         }
 
       }
     }
     if (s.kind === "bridge") {
-      architecture.push({ x, z, y: y - foundationDepth / 2, w: 2, d: 2, h: foundationDepth });
+      const alongX = s.dx !== 0;
+      for (const side of [-1, 1]) {
+        const offset = side * (1 - railWidth / 2);
+        architecture.push({
+          x: alongX ? x : x + offset, z: alongX ? z + offset : z, y: y - rungHeight - railWidth / 2,
+          w: alongX ? 2 : railWidth, d: alongX ? railWidth : 2, h: railWidth,
+        });
+      }
+      const rungCount = 5;
+      for (let step = 0; step < rungCount; step++) {
+        const offset = (step + 0.5) * 2 / rungCount - 1;
+        architecture.push({
+          x: alongX ? x + offset : x, z: alongX ? z : z + offset, y: y - rungHeight / 2,
+          w: alongX ? rungWidth : 2, d: alongX ? 2 : rungWidth, h: rungHeight,
+        });
+      }
     }
     if (s.kind === "canopy") {
-      architecture.push({ x, z, y: y + 3.25, w: 4.8, d: 4.8, h: 0.16 });
-      for (const dx of [-2, 2])
+      const roofY = y + 3.25;
+      for (const dx of [-2, 2]) {
+        architecture.push({ x: x + dx, y: roofY, z, w: railWidth, d: 4 + railWidth, h: railWidth });
         for (const dz of [-2, 2]) {
           const base = terrainSample(world, s.x + dx / 2, s.z + dz / 2).height;
+          const postHeight = roofY - railWidth / 2 - base;
           architecture.push({
-            x: x + dx,
-            z: z + dz,
-            y: (y + 3.25 + base) / 2,
-            w: 0.1,
-            d: 0.1,
-            h: y + 3.25 - base,
+            x: x + dx, z: z + dz, y: base + postHeight / 2,
+            w: railWidth, d: railWidth, h: postHeight,
           });
         }
+      }
+      const intervals = 9;
+      for (let step = 0; step <= intervals; step++) {
+        architecture.push({
+          x, z: z - 2 + step * 4 / intervals, y: roofY + (railWidth + rungHeight) / 2,
+          w: 4 + railWidth, d: rungWidth, h: rungHeight,
+        });
+      }
     }
   }
   const matrix = new THREE.Matrix4(),
@@ -110,7 +131,7 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
     if (!pieces.length) continue;
     const built = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: ladder ? "#a0a0a0" : "#858585", roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: "#a0a0a0", roughness: 1 }),
       pieces.length,
     );
     pieces.forEach((b, i) => {

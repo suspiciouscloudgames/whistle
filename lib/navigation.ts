@@ -2,13 +2,16 @@ import type { World } from "./world.ts";
 import { bridgeAt, floatingCoverage, floorHeight, ladderAt, tileAt, type Structure } from "./terrain.ts";
 import { groundTileHeight, isGap, isVoid } from "./tile.ts";
 
+export const PLAYER_FOOTPRINT_RADIUS = .08;
+const footprintOffsets = [-PLAYER_FOOTPRINT_RADIUS, PLAYER_FOOTPRINT_RADIUS];
+
 export function blocksVoidStep(world: Pick<World, "size" | "terrain">, from: { x: number; z: number }, to: { x: number; z: number }, structures: Structure[] = []) {
   if (!world.terrain?.floating) return false;
   const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.z - from.z) / .08));
   for (let i = 1; i <= steps; i++) {
     const x = from.x + (to.x - from.x) * i / steps, z = from.z + (to.z - from.z) * i / steps;
     if (floatingCoverage(world, x, z) < .5 && !bridgeAt(structures, x, z)) return true;
-    for (const dx of [-.08, .08]) for (const dz of [-.08, .08]) {
+    for (const dx of footprintOffsets) for (const dz of footprintOffsets) {
       const tile = tileAt(world, x + dx, z + dz);
       if ((!tile || isVoid(tile)) && !bridgeAt(structures, x + dx, z + dz)) return true;
     }

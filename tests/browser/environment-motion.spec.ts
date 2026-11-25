@@ -74,6 +74,13 @@ test("opposing raised banks around a hole supports floating, crouch releases it"
     world.terrain!.tiles[3 * world.size + 4].height = 1;
   const errors = await enter(page, world);
   await walkIntoFloat(page);
+  await page.locator(".play-shell canvas").evaluate(canvas => new Promise<void>(resolve => {
+    const nextPosition = new MutationObserver(() => {
+      nextPosition.disconnect();
+      resolve();
+    });
+    nextPosition.observe(canvas, { attributes: true, attributeFilter: ["data-player-z"] });
+  }));
   const floating = await position(page);
   await page.waitForTimeout(400);
   expect(await position(page)).toEqual(floating);

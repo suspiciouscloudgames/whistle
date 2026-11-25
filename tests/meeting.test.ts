@@ -11,7 +11,7 @@ import { createMeetingRoom, addMeetingMember, publishMeeting, moveMeeting, meeti
 import { attachMeetingRelay } from "../scripts/meeting/relay.ts";
 import { attachPortalRelay } from "../scripts/portals/relay.ts";
 import { isVoid } from "../lib/tile.ts";
-import { meetingSocketURL } from "../lib/meeting-client.ts";
+import { meetingSocketURL, resumeMeetingPosition } from "../lib/meeting-client.ts";
 const join=(room:MeetingRoom,id:string,now?:number)=>{const member=addMeetingMember(room,id,now);if(!member.ready)publishMeeting(room,id,member.document);return member;};
 const setup=(ids=["a","b"])=>{const room=createMeetingRoom(3);ids.forEach(id=>join(room,id));return room;};
 const move=(r:MeetingRoom,id:string,x:number,z:number,grounded=true,playing=true,resetId?:number)=>moveMeeting(r,id,{x,z,yaw:0,grounded},playing,resetId);
@@ -81,6 +81,31 @@ test("losing the relay preserves the return footing until landing at home, then 
   assert.equal(isVoid(returned.world.terrain!.tiles[meetingCell(32,10)]),true);
   assert.equal(isVoid(returned.world.terrain!.tiles[meetingCell(home.x,home.z)]),false);
   assert.equal(retireOfflineMeetingFootings(returned,home),returned);
+});
+
+test("each return footing stays under a player straddling the edge and retires once both feet clear it", () => {
+  for (const [visitor, neighbor, direction] of [["a", "b", -1], ["b", "a", 1]] as const) {
+    const room = setup();
+    use(room, visitor, author(room, neighbor));
+    const gate = open(room, visitor, neighbor);
+    paint(room, visitor, direction === 1 ? 0 : 11, gate.z);
+    leaveMeetingMember(room, neighbor);
+    const view = meetingView(room, visitor);
+    const pad = { x: gate.x, z: gate.z, yaw: 0, grounded: true };
+    const edge = { ...pad, x: pad.x + direction * .525 };
+    const landed = { ...pad, x: pad.x + direction * .61 };
+    const reset = { ...view, reset: { id: 1, reason: "disconnect" as const, player: pad } };
+
+    assert.equal(retireOfflineMeetingFootings(view, edge), view);
+    assert.equal(resumeMeetingPosition(reset, edge), reset);
+    move(room, visitor, edge.x, edge.z);
+    assert.equal(meetingView(room, visitor).connections.length, 1);
+
+    assert.equal(retireOfflineMeetingFootings(view, landed).connections.length, 0);
+    assert.deepEqual(resumeMeetingPosition(reset, landed).reset.player, landed);
+    move(room, visitor, landed.x, landed.z);
+    assert.equal(meetingView(room, visitor).connections.length, 0);
+  }
 });
 
 test("old saved footings are discarded on load and cannot reappear as physical ground or stack beside a new neighbor",()=>{
@@ -423,8 +448,7 @@ test("presence clocks and movement do not invalidate connection UI, but connecti
     assert.equal(sameMeetingPosition(p, changed), false);
 });
 
-test("reconnecting after walking home keeps the current safe position instead of replaying the return teleport", async () => {
-  const { resumeMeetingPosition } = await import("../lib/meeting-client.ts");
+test("reconnecting after walking home keeps the current safe position instead of replaying the return teleport", () => {
   const r = setup(); use(r, "a", author(r, "b")); const gate = open(r, "a", "b");
   const view = meetingView(r, "a");
   view.reset = { id: 5, reason: "disconnect", player: { x: gate.x, z: gate.z, yaw: 0, grounded: true } };

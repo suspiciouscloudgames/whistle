@@ -1021,7 +1021,8 @@ export default function Scene({
         if(fade>=1) {scene.remove(fog.mesh);disposeGroup(fog.mesh);fadingMist.splice(i,1);}
       }
       waterReflection.update(renderer, scene, camera, terrain.group, time);
-      if (time - lastShadow >= quality.shadowInterval || shadowTerrain !== terrain.group) {
+      const shadowInterval = quality.name === "low" ? Math.max(quality.shadowInterval, elapsed * 2) : quality.shadowInterval;
+      if (time - lastShadow >= shadowInterval || shadowTerrain !== terrain.group) {
         renderer.shadowMap.needsUpdate = true;
         lastShadow = time;
         shadowTerrain = terrain.group;

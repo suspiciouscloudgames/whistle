@@ -70,14 +70,19 @@ async function play(page: Page) {
 async function placePlayer(page: Page, x: number, z: number, yaw: number) {
   await page.bringToFront();
   await page.evaluate(p => (window as any).__placePlayer(p), { x, z, yaw });
-  await expect.poll(async () => (await position(page)).x).toBeCloseTo(x, 1);
+  await page.waitForFunction(target => {
+    const canvas = document.querySelector<HTMLCanvasElement>('.play-shell canvas');
+    return canvas && Math.abs(Number(canvas.dataset.playerX) - target) < .05;
+  }, x, { timeout: 20_000 });
 }
 async function forwardTo(page: Page, x: number, direction: 'left' | 'right') {
   await page.bringToFront();
-  await page.keyboard.down('w');
-  try {
-    await expect.poll(async () => (await position(page)).x, { timeout: 20_000, intervals: [80] })[direction === 'left' ? 'toBeLessThan' : 'toBeGreaterThan'](x);
-  } finally { await page.keyboard.up('w'); }
+  const progress = expect.poll(async () => {
+    await page.keyboard.press('w', { delay: 160 });
+    return page.evaluate(() => Number(document.querySelector<HTMLCanvasElement>('.play-shell canvas')?.dataset.playerX));
+  }, { timeout: 45_000, intervals: [30] });
+  if (direction === 'left') await progress.toBeLessThan(x);
+  else await progress.toBeGreaterThan(x);
 }
 
 function trailState(page: Page) {
@@ -258,6 +263,19 @@ test("walking keeps its speed when rendering falls to ten frames per second", as
     expect(walk.distance / walk.seconds).toBeGreaterThan(1.2);
     expect(walk.distance / walk.seconds).toBeLessThan(1.8);
     expect((await position(page)).motion).toBe('walk');
+    const start = await page.evaluate(() => {
+      const counters = (window as any).__mp;
+      counters.frameInterval = 160;
+      return { frames: counters.frames, shadows: counters.shadows };
+    });
+    const sample = await page.waitForFunction(start => {
+      const counters = (window as any).__mp;
+      const frames = counters.frames - start.frames;
+      return frames >= 10 ? { frames, shadows: counters.shadows - start.shadows } : null;
+    }, start, { timeout: 15_000 });
+    const slowFrames = (await sample.jsonValue())!;
+    expect(slowFrames.shadows).toBeGreaterThan(0);
+    expect(slowFrames.shadows).toBeLessThanOrEqual(Math.ceil(slowFrames.frames / 2));
     expect(errors).toEqual([]);
   } finally { await context.close(); }
 });

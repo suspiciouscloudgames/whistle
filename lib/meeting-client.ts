@@ -1,5 +1,4 @@
-import { MEETING_PATH, meetingOwner, meetingLocal, type MeetingPosition, type MeetingPresence, type MeetingView } from "./meeting.ts";
-import { floorHeight } from "./terrain.ts";
+import { MEETING_PATH, onOwnMeetingFloor, type MeetingPosition, type MeetingPresence, type MeetingView } from "./meeting.ts";
 
 export function meetingSocketURL(page:URL, endpoint?:string) {
   const url=new URL(endpoint || MEETING_PATH,page);
@@ -27,9 +26,6 @@ export function sameMeetingPresence(a: MeetingPresence, b: MeetingPresence) {
 }
 
 export function resumeMeetingPosition(view: MeetingView, player: MeetingPosition | null): MeetingView {
-  if (view.reset.reason !== "disconnect" || !player?.grounded || player.falling ||
-      meetingOwner(Math.round(player.x), Math.round(player.z)) !== 0) return view;
-  const local = meetingLocal(0, player);
-  if (floorHeight(view.ownWorld, local.x, local.z) === null) return view;
+  if (view.reset.reason !== "disconnect" || !player || !onOwnMeetingFloor(view.ownWorld, player)) return view;
   return { ...view, reset: { ...view.reset, player: { ...player } } };
 }

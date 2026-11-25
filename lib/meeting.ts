@@ -3,6 +3,7 @@ import { contentKind, MAX_LIBRARY_SIZE } from "./content-limits.ts";
 import { createTerrainWorld } from "./create-world.ts";
 import { flatTerrain, floorHeight, deriveStructures, randomSequence, type Structure, type Tile } from "./terrain.ts";
 import { isGap } from "./tile.ts";
+import { PLAYER_FOOTPRINT_RADIUS } from "./navigation.ts";
 import { initializeWorkshop, isContentEdit, TURN_HINT } from "./workshop.ts";
 import { advanceMeteors, createMeteorTimeline, type MeteorTimeline } from "./meteors.ts";
 
@@ -88,11 +89,16 @@ export function connectionCandidates(a:number,b:number) {
 export function connectionCells(connection:ConnectionTile) { return connection.cells ?? [connection]; }
 const portPoint = (index:number,row:number) => ({x:index===0?12:25,z:row});
 const footingPoint = (footing:ConnectionFooting) => portPoint(footing.side,footing.row);
+export function onOwnMeetingFloor(world: World, player: MeetingPosition) {
+  if (!player.grounded || player.falling) return false;
+  const { x, z } = meetingLocal(0, player);
+  const min = -.5 + PLAYER_FOOTPRINT_RADIUS;
+  const max = LOCAL_SIZE - .5 - PLAYER_FOOTPRINT_RADIUS;
+  return x >= min && x < max && z >= min && z < max && supported(world, x, z);
+}
 function returningToOwnWorld(member:Member) {
   if(!member.ports.some(p=>p?.used&&!p.active&&member.document.connectionFootings?.some(f=>f.id===p.key&&f.built)))return false;
-  if(!member.player.grounded||meetingOwner(Math.round(member.player.x),Math.round(member.player.z))!==0)return true;
-  const local=meetingLocal(0,member.player);
-  return !supported(member.document,local.x,local.z);
+  return !onOwnMeetingFloor(member.document, member.player);
 }
 function assignPort(room:MeetingRoom,member:Member,peer:Member,side:0|1,row:number) {
   const key=`connection-${room.seed.toString(36)}-${++room.sequence}`;
@@ -315,7 +321,7 @@ export function offlineMeetingWorld(view:MeetingView):World {
 }
 export function retireOfflineMeetingFootings(view:MeetingView, player:MeetingPosition):MeetingView {
   if(!view.connections.length&&!view.approaches.length)return view;
-  if(!player.grounded||player.falling||meetingOwner(Math.round(player.x),Math.round(player.z))!==0)return view;
+  if(!onOwnMeetingFloor(view.ownWorld, player))return view;
   const cleared={...view,connections:[],approaches:[],joined:[view.id],ownWorld:{...view.ownWorld,connectionFootings:[]}};
   return {...cleared,world:offlineMeetingWorld(cleared)};
 }
