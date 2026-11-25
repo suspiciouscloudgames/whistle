@@ -13,7 +13,7 @@ import { makeTerrain } from "./TerrainScene";
 import { makeSurfaceImage } from "./SurfaceImage";
 import { makeWaterReflection } from "./WaterReflection";
 import { applyPixelMaterials, makePixelRenderer } from "./PixelGraphics";
-import { renderQuality } from "@/lib/render-quality";
+import { renderQuality, createAdaptiveResolution } from "@/lib/render-quality";
 import { horizonTone } from "./PixelPalette";
 import { addSymbolVisuals, makeSymbolExperience } from "./SymbolExperience";
 import { floorHeight, tileAt, terrainSample, ladderAt, LEVEL, SURFACES } from "@/lib/terrain";
@@ -246,8 +246,10 @@ export default function Scene({
     const atmosphere = new THREE.FogExp2(sky, baseFog * currentDay.fog);
     scene.fog = atmosphere;
     const quality = renderQuality();
+    const resolution = quality.name === "low" ? createAdaptiveResolution(quality.pixelRatio) : null;
     renderer.setPixelRatio(quality.pixelRatio);
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor("#000000");
@@ -263,7 +265,7 @@ export default function Scene({
     sun.name = "whistle-sun";
     sun.position.set(currentDay.sunX, currentDay.sunY, currentDay.sunZ);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(quality.shadowSize, quality.shadowSize);
     sun.shadow.camera.left = -16;
     sun.shadow.camera.right = 16;
     sun.shadow.camera.top = 16;
@@ -631,12 +633,19 @@ export default function Scene({
       renderer.domElement.addEventListener("pointerup", up);
       renderer.domElement.addEventListener("pointercancel", up);
     }
-    let rendered = false, inView = true, disposed = false;
+    let rendered = false, inView = true, disposed = false, lastShadow = -Infinity;
+    let shadowTerrain: THREE.Group | undefined;
     const render = (time: number) => {
       frame = 0;
       if (disposed || document.hidden || (!inView && rendered)) return;
-      const dt = Math.min((time - last) / 1000, 0.05);
+      const elapsed = time - last;
+      const dt = Math.min(Math.max(elapsed / 1000, 0), 0.25);
       last = time;
+      const ratio = resolution?.sample(elapsed);
+      if (ratio !== undefined && ratio !== renderer.getPixelRatio()) {
+        renderer.setPixelRatio(ratio);
+        resize();
+      }
 
       const timeOfDay = worldRef.current.timeOfDay ?? "auto";
       const changedTimeOfDay = timeOfDay !== lastTimeOfDay;
@@ -758,187 +767,191 @@ export default function Scene({
       }
       if (mode === "play" && !portalRef.current.suspended) {
         let audioFeet: number | null = null;
-        if (falling) {
-          falling.elapsed += dt;
-          const frame = fallFrame(falling.originY, falling.elapsed);
-          eyeY = reducedMotion ? falling.originY : frame.y;
-          if (fallVeil.current)
-            fallVeil.current.style.opacity = String(frame.fade);
-          if (frame.done) {
-            player.x = worldRef.current.start.x;
-            player.z = worldRef.current.start.z;
-            player.yaw = targetYaw = 0;
-            pitch = targetPitch = START_PITCH;
-            const spawn = environmentAt(
-              terrain.environment,
-              player.x,
-              player.z,
-            );
-            eyeY = playerEyeHeight(
-              floorHeight(worldRef.current, player.x, player.z, structures) ?? 0,
-              spawn.water,
-              EYE_HEIGHT,
-            );
-            falling = null;
-            jump = null;
-            air = null;
-            groundAge = 0;
-            lastGround = floorHeight(worldRef.current, player.x, player.z, structures) ?? 0;
-            respawnFade = 1;
-            clear();
-          }
-        } else {
-          respawnFade = Math.max(0, respawnFade - dt / 0.35);
-          if (fallVeil.current)
-            fallVeil.current.style.opacity = String(respawnFade);
-          const active = (key: string) =>
-            keys.has(key) || controls?.current.has(key);
-          const profile = movementProfile(!!active("run"), !!active("crouch"));
-          const ground = floorHeight(worldRef.current, player.x, player.z, structures);
-          const localEffects = environmentAt(terrain.environment, player.x, player.z);
-          if (ground !== null && !jump && !air) {
-            lastGround = ground;
-            groundAge = 0;
-          } else groundAge += dt;
-          if (controls?.current.delete("jump")) jumpBuffer = JUMP_BUFFER_SECONDS;
-          else jumpBuffer = Math.max(0, jumpBuffer - dt);
-          if (jumpBuffer > 0 && !jump && !air && groundAge <= COYOTE_SECONDS) {
-            const input = Number(!!(active("forward") || active("w") || active("arrowup")))
-              - Number(!!(active("backward") || active("s") || active("arrowdown")))
-              || Math.sign(stick?.current.y ?? 0);
-            const direction = input || (Math.abs(velocity) > .1 ? Math.sign(velocity) : Math.sign(stepRemaining));
-            jump = launchJump(lastGround, player.yaw, direction, 1.5 * profile.speed);
-            jumpBuffer = 0;
-            groundAge = Infinity;
-            stepRemaining = 0;
-          }
-          if (jump) jump.elapsed += dt;
-          const crouching = !!active("crouch");
-          if (!air && ground === null && localEffects.lift > .12 && !crouching) {
-            const feet = jump ? jumpFrame(jump.origin, jump.elapsed).y : eyeY - profile.eyeHeight;
-            if (feet < localEffects.liftCeiling + 1.5) {
-              air = environmentalFlight("float", feet, jump?.vx ?? 0, jump?.vz ?? 0);
+        const steps = Math.max(1, Math.ceil(dt / .05)), step = dt / steps;
+        for (let i = 0; i < steps; i++) {
+          const dt = step;
+          if (falling) {
+            falling.elapsed += dt;
+            const frame = fallFrame(falling.originY, falling.elapsed);
+            eyeY = reducedMotion ? falling.originY : frame.y;
+            if (fallVeil.current)
+              fallVeil.current.style.opacity = String(frame.fade);
+            if (frame.done) {
+              player.x = worldRef.current.start.x;
+              player.z = worldRef.current.start.z;
+              player.yaw = targetYaw = 0;
+              pitch = targetPitch = START_PITCH;
+              const spawn = environmentAt(
+                terrain.environment,
+                player.x,
+                player.z,
+              );
+              eyeY = playerEyeHeight(
+                floorHeight(worldRef.current, player.x, player.z, structures) ?? 0,
+                spawn.water,
+                EYE_HEIGHT,
+              );
+              falling = null;
               jump = null;
-            }
-          }
-          for (const [command, turn] of [
-            ["turn-left", -Math.PI / 12],
-            ["turn-right", Math.PI / 12],
-          ] as const) {
-            if (controls?.current.delete(command)) {
-              targetYaw =
-                player.yaw +
-                THREE.MathUtils.clamp(
-                  targetYaw + turn - player.yaw,
-                  -Math.PI / 6,
-                  Math.PI / 6,
-                );
-            }
-          }
-          if (controls?.current.delete("step"))
-            stepRemaining = Math.min(stepRemaining + 0.35, 0.7);
-          if (controls?.current.delete("backstep"))
-            stepRemaining = Math.max(stepRemaining - 0.35, -0.7);
-          const turn =
-            Number(!!(active("right") || active("d") || active("arrowright"))) -
-            Number(!!(active("left") || active("a") || active("arrowleft")))
-            || (stick?.current.x ?? 0);
-          if (turn) {
-            targetYaw += turn * dt * 0.55;
-          }
-          player.yaw = followHeading(player.yaw, targetYaw, dt);
-          pitch += (targetPitch - pitch) * (1 - Math.exp(-4 * dt));
-          const heldForward =
-            active("forward") || active("w") || active("arrowup");
-          const backward =
-            active("backward") || active("s") || active("arrowdown");
-          const forwardInput = Number(!!heldForward) - Number(!!backward) || (stick?.current.y ?? 0);
-          let distance = forwardInput * dt * 1.5;
-          if (forwardInput) stepRemaining = 0;
-          else if (Math.abs(stepRemaining) > 0) {
-            distance =
-              Math.sign(stepRemaining) *
-              Math.min(dt * 1.5, Math.abs(stepRemaining));
-            stepRemaining -= distance;
-          }
-          const airInput = dt > 0 ? distance / (dt * 1.5) : 0;
-          const surface =
-            tileAt(worldRef.current, player.x, player.z)?.surface ?? "plain";
-          const conditions = environmentAt(
-            terrain.environment,
-            player.x,
-            player.z,
-          );
-          const wet =
-            conditions.water !== null &&
-            conditions.water >
-              (floorHeight(worldRef.current, player.x, player.z, structures) ??
-                0);
-          const ladder = !jump && !air ? ladderAt(structures,player.x,player.z) : undefined;
-          const rise = ladder ? ((tileAt(worldRef.current,ladder.x+ladder.dx,ladder.z+ladder.dz)?.height ?? ladder.height)-ladder.height)*LEVEL : 0;
-          const climbSpeed = ladder ? Math.min(1,1.2/Math.max(rise,1))/profile.speed : 1;
-          const speed =
-            SURFACES.find((s) => s.id === surface)!.speed * (wet ? 0.55 : 1) * profile.speed * climbSpeed;
-          const desired = dt ? (distance / dt) * speed : 0;
-          velocity = desired;
-          distance = velocity * dt;
-          if (air) {
-            const steering = airInput * 1.2;
-            air.vx = Math.sin(player.yaw) * steering;
-            air.vz = -Math.cos(player.yaw) * steering;
-          }
-          const dx = air ? air.vx * dt : jump ? jump.vx * dt : Math.sin(player.yaw) * distance,
-            dz = air ? air.vz * dt : jump ? jump.vz * dt : -Math.cos(player.yaw) * distance;
-          if (!blocked(player.x + dx, player.z)) player.x += dx;
-          if (!blocked(player.x, player.z + dz)) player.z += dz;
-          const floor = floorHeight(
-            worldRef.current,
-            player.x,
-            player.z,
-            structures,
-          );
-          let feet = floor;
-          if (air) {
-            const effects = environmentAt(terrain.environment, player.x, player.z);
-            const result = stepEnvironmentalFlight(air, dt, floor, {
-              lift: effects.lift, liftCeiling: effects.liftCeiling,
-              crouching,
-            });
-            if (!reducedMotion) {
-              player.yaw += result.yawDelta;
-              targetYaw += result.yawDelta;
-            }
-            air = result.landed || result.missed ? null : result.flight;
-            feet = result.missed ? null : result.flight.y;
-          } else if (jump) {
-            const landing = resolveJump(jump, floor);
-            feet = landing.feet;
-            if (landing.landed || landing.missed) jump = null;
-          } else if (floor === null && groundAge <= COYOTE_SECONDS) {
-            feet = lastGround - 5 * groundAge * groundAge;
-          }
-          audioFeet = feet;
-          if (feet === null) {
-            clear();
-            const tile = tileAt(worldRef.current, player.x, player.z);
-            if (isHole(tile) && !isVoid(tile)) {
-              falling = { originY: eyeY, elapsed: 0 };
-              callback.current?.({ ...player, pitch, falling: true });
-            } else {
-              const center = { x: Math.round(player.x), z: Math.round(player.z) };
-              const safe = floorHeight(worldRef.current, center.x, center.z, structures) !== null
-                ? center : worldRef.current.start;
-              player.x = safe.x;
-              player.z = safe.z;
+              air = null;
+              groundAge = 0;
+              lastGround = floorHeight(worldRef.current, player.x, player.z, structures) ?? 0;
+              respawnFade = 1;
+              clear();
             }
           } else {
-            const local = environmentAt(
+            respawnFade = Math.max(0, respawnFade - dt / 0.35);
+            if (fallVeil.current)
+              fallVeil.current.style.opacity = String(respawnFade);
+            const active = (key: string) =>
+              keys.has(key) || controls?.current.has(key);
+            const profile = movementProfile(!!active("run"), !!active("crouch"));
+            const ground = floorHeight(worldRef.current, player.x, player.z, structures);
+            const localEffects = environmentAt(terrain.environment, player.x, player.z);
+            if (ground !== null && !jump && !air) {
+              lastGround = ground;
+              groundAge = 0;
+            } else groundAge += dt;
+            if (controls?.current.delete("jump")) jumpBuffer = JUMP_BUFFER_SECONDS;
+            else jumpBuffer = Math.max(0, jumpBuffer - dt);
+            if (jumpBuffer > 0 && !jump && !air && groundAge <= COYOTE_SECONDS) {
+              const input = Number(!!(active("forward") || active("w") || active("arrowup")))
+                - Number(!!(active("backward") || active("s") || active("arrowdown")))
+                || Math.sign(stick?.current.y ?? 0);
+              const direction = input || (Math.abs(velocity) > .1 ? Math.sign(velocity) : Math.sign(stepRemaining));
+              jump = launchJump(lastGround, player.yaw, direction, 1.5 * profile.speed);
+              jumpBuffer = 0;
+              groundAge = Infinity;
+              stepRemaining = 0;
+            }
+            if (jump) jump.elapsed += dt;
+            const crouching = !!active("crouch");
+            if (!air && ground === null && localEffects.lift > .12 && !crouching) {
+              const feet = jump ? jumpFrame(jump.origin, jump.elapsed).y : eyeY - profile.eyeHeight;
+              if (feet < localEffects.liftCeiling + 1.5) {
+                air = environmentalFlight("float", feet, jump?.vx ?? 0, jump?.vz ?? 0);
+                jump = null;
+              }
+            }
+            for (const [command, turn] of [
+              ["turn-left", -Math.PI / 12],
+              ["turn-right", Math.PI / 12],
+            ] as const) {
+              if (controls?.current.delete(command)) {
+                targetYaw =
+                  player.yaw +
+                  THREE.MathUtils.clamp(
+                    targetYaw + turn - player.yaw,
+                    -Math.PI / 6,
+                    Math.PI / 6,
+                  );
+              }
+            }
+            if (controls?.current.delete("step"))
+              stepRemaining = Math.min(stepRemaining + 0.35, 0.7);
+            if (controls?.current.delete("backstep"))
+              stepRemaining = Math.max(stepRemaining - 0.35, -0.7);
+            const turn =
+              Number(!!(active("right") || active("d") || active("arrowright"))) -
+              Number(!!(active("left") || active("a") || active("arrowleft")))
+              || (stick?.current.x ?? 0);
+            if (turn) {
+              targetYaw += turn * dt * 0.55;
+            }
+            player.yaw = followHeading(player.yaw, targetYaw, dt);
+            pitch += (targetPitch - pitch) * (1 - Math.exp(-4 * dt));
+            const heldForward =
+              active("forward") || active("w") || active("arrowup");
+            const backward =
+              active("backward") || active("s") || active("arrowdown");
+            const forwardInput = Number(!!heldForward) - Number(!!backward) || (stick?.current.y ?? 0);
+            let distance = forwardInput * dt * 1.5;
+            if (forwardInput) stepRemaining = 0;
+            else if (Math.abs(stepRemaining) > 0) {
+              distance =
+                Math.sign(stepRemaining) *
+                Math.min(dt * 1.5, Math.abs(stepRemaining));
+              stepRemaining -= distance;
+            }
+            const airInput = dt > 0 ? distance / (dt * 1.5) : 0;
+            const surface =
+              tileAt(worldRef.current, player.x, player.z)?.surface ?? "plain";
+            const conditions = environmentAt(
               terrain.environment,
               player.x,
               player.z,
             );
-            const targetY = playerEyeHeight(feet, local.water, profile.eyeHeight);
-            eyeY += (targetY - eyeY) * (1 - Math.exp(-8 * dt));
+            const wet =
+              conditions.water !== null &&
+              conditions.water >
+                (floorHeight(worldRef.current, player.x, player.z, structures) ??
+                  0);
+            const ladder = !jump && !air ? ladderAt(structures,player.x,player.z) : undefined;
+            const rise = ladder ? ((tileAt(worldRef.current,ladder.x+ladder.dx,ladder.z+ladder.dz)?.height ?? ladder.height)-ladder.height)*LEVEL : 0;
+            const climbSpeed = ladder ? Math.min(1,1.2/Math.max(rise,1))/profile.speed : 1;
+            const speed =
+              SURFACES.find((s) => s.id === surface)!.speed * (wet ? 0.55 : 1) * profile.speed * climbSpeed;
+            const desired = dt ? (distance / dt) * speed : 0;
+            velocity = desired;
+            distance = velocity * dt;
+            if (air) {
+              const steering = airInput * 1.2;
+              air.vx = Math.sin(player.yaw) * steering;
+              air.vz = -Math.cos(player.yaw) * steering;
+            }
+            const dx = air ? air.vx * dt : jump ? jump.vx * dt : Math.sin(player.yaw) * distance,
+              dz = air ? air.vz * dt : jump ? jump.vz * dt : -Math.cos(player.yaw) * distance;
+            if (!blocked(player.x + dx, player.z)) player.x += dx;
+            if (!blocked(player.x, player.z + dz)) player.z += dz;
+            const floor = floorHeight(
+              worldRef.current,
+              player.x,
+              player.z,
+              structures,
+            );
+            let feet = floor;
+            if (air) {
+              const effects = environmentAt(terrain.environment, player.x, player.z);
+              const result = stepEnvironmentalFlight(air, dt, floor, {
+                lift: effects.lift, liftCeiling: effects.liftCeiling,
+                crouching,
+              });
+              if (!reducedMotion) {
+                player.yaw += result.yawDelta;
+                targetYaw += result.yawDelta;
+              }
+              air = result.landed || result.missed ? null : result.flight;
+              feet = result.missed ? null : result.flight.y;
+            } else if (jump) {
+              const landing = resolveJump(jump, floor);
+              feet = landing.feet;
+              if (landing.landed || landing.missed) jump = null;
+            } else if (floor === null && groundAge <= COYOTE_SECONDS) {
+              feet = lastGround - 5 * groundAge * groundAge;
+            }
+            audioFeet = feet;
+            if (feet === null) {
+              clear();
+              const tile = tileAt(worldRef.current, player.x, player.z);
+              if (isHole(tile) && !isVoid(tile)) {
+                falling = { originY: eyeY, elapsed: 0 };
+                callback.current?.({ ...player, pitch, falling: true });
+              } else {
+                const center = { x: Math.round(player.x), z: Math.round(player.z) };
+                const safe = floorHeight(worldRef.current, center.x, center.z, structures) !== null
+                  ? center : worldRef.current.start;
+                player.x = safe.x;
+                player.z = safe.z;
+              }
+            } else {
+              const local = environmentAt(
+                terrain.environment,
+                player.x,
+                player.z,
+              );
+              const targetY = playerEyeHeight(feet, local.water, profile.eyeHeight);
+              eyeY += (targetY - eyeY) * (1 - Math.exp(-8 * dt));
+            }
           }
         }
         const underfoot = environmentAt(terrain.environment, player.x, player.z);
@@ -1004,6 +1017,11 @@ export default function Scene({
         if(fade>=1) {scene.remove(fog.mesh);disposeGroup(fog.mesh);fadingMist.splice(i,1);}
       }
       waterReflection.update(renderer, scene, camera, terrain.group, time);
+      if (time - lastShadow >= quality.shadowInterval || shadowTerrain !== terrain.group) {
+        renderer.shadowMap.needsUpdate = true;
+        lastShadow = time;
+        shadowTerrain = terrain.group;
+      }
       pixelRenderer.render(scene, camera);
       if (!rendered) {
         rendered = true;
@@ -1023,6 +1041,7 @@ export default function Scene({
         advanceMeteors(meteorsRef.current.timeline, false, Date.now());
       } else if (!frame) {
         last = performance.now();
+        resolution?.reset();
         frame = requestAnimationFrame(render);
       }
     };

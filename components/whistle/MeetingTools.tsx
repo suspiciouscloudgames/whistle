@@ -9,7 +9,7 @@ export function MeetingOverlay({ meeting }: {meeting:MeetingSession}) {
     left:`${Math.max(0,Math.min(100,(q.x+.5)/LOCAL_SIZE*100))}%`,top:`${Math.max(0,Math.min(100,(q.z+.5)/LOCAL_SIZE*100))}%`};};
   const tile=(p:{x:number;z:number})=>{const q=meetingLocal(view.slot,p);return{
     left:`${q.x/LOCAL_SIZE*100}%`,top:`${q.z/LOCAL_SIZE*100}%`,width:`${100/LOCAL_SIZE}%`,height:`${100/LOCAL_SIZE}%`};};
-  const own=presence.peers.find(p=>p.id===view.id)?.player;
+  const own=meeting.positionRef.current ?? presence.peers.find(p=>p.id===view.id)?.player;
   return <div className="meeting-map-layer">
     {view.signals.filter(s=>s.to===view.id).map(s=><span key={s.id} className="meeting-map-signal" style={place(s)} role="img"
       aria-label="도착한 기호" data-meeting-signal={s.id} data-signal-x={s.x} data-signal-z={s.z}>◇</span>)}

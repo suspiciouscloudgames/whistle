@@ -13,6 +13,50 @@ import {
   blocksGroundStep,
 } from "../lib/navigation.ts";
 import { eraseBackground, cropBounds } from "../lib/image-edit.ts";
+import { createAdaptiveResolution } from "../lib/render-quality.ts";
+
+test("sustained slow rendering reduces resolution within bounds and recovers without rapid oscillation", () => {
+  const resolution = createAdaptiveResolution(1);
+  const run = (fps: number, seconds: number) => {
+    let ratio = 1;
+    for (let i = 0; i < fps * seconds; i++) ratio = resolution.sample(1000 / fps);
+    return ratio;
+  };
+  assert.equal(run(20, 4), .75);
+  assert.equal(run(20, 4), .5);
+  assert.equal(run(10, 20), .5);
+  assert.equal(run(40, 20), .5);
+  assert.equal(run(60, 10), .5);
+  assert.equal(run(60, 12), .75);
+  assert.equal(run(60, 25), 1);
+  assert.equal(run(60, 25), 1);
+});
+
+test("brief stalls and hidden time do not lower resolution or carry an unfinished slow sample", () => {
+  const resolution = createAdaptiveResolution(1);
+  for (let i = 0; i < 60; i++) assert.equal(resolution.sample(50), 1);
+  assert.equal(resolution.sample(10_000), 1);
+  for (let i = 0; i < 60; i++) assert.equal(resolution.sample(50), 1);
+  resolution.reset();
+  for (let i = 0; i < 60; i++) assert.equal(resolution.sample(50), 1);
+  for (let i = 0; i < 600; i++) assert.equal(resolution.sample(1000 / 60), 1);
+  for (const invalid of [0, -1, NaN, Infinity]) assert.equal(resolution.sample(invalid), 1);
+});
+
+test("an already small render buffer never increases beyond its device ratio", () => {
+  const resolution = createAdaptiveResolution(.4);
+  for (let i = 0; i < 200; i++) assert.equal(resolution.sample(100), .4);
+  for (let i = 0; i < 2000; i++) assert.equal(resolution.sample(1000 / 60), .4);
+});
+
+test("continuous two frame per second rendering still triggers the fallback", () => {
+  const resolution = createAdaptiveResolution(1);
+  for (let i = 0; i < 7; i++) resolution.sample(500);
+  assert.equal(resolution.sample(500), .75);
+  for (let i = 0; i < 7; i++) resolution.sample(500);
+  assert.equal(resolution.sample(500), .5);
+});
+
 test("movement follows physical WASD keys across Korean input and Caps Lock", () => {
   for (const [code, korean, expected] of [
     ["KeyW", "ㅈ", "w"],

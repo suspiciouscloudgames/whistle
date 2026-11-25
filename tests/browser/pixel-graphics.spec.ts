@@ -54,7 +54,8 @@ test("forest and water keep a limited grayscale palette through resize, night an
     expect(frame.shades.every(color => (color >> 16) === ((color >> 8) & 255) && (color >> 16) === (color & 255))).toBe(true);
     expect(frame.lit).toBeGreaterThan(0);
     const ratio=await page.evaluate(()=>Math.min(devicePixelRatio,1));
-    expect(frame.width).toBe(Math.floor(frame.displayWidth*ratio));
+    expect(frame.width).toBeLessThanOrEqual(Math.floor(frame.displayWidth*ratio));
+    expect(frame.width).toBeGreaterThanOrEqual(Math.floor(frame.displayWidth*Math.min(ratio,.5)));
   };
   await check();
   await page.locator(".live-preview").screenshot({ path: testInfo.outputPath("pixel-overview.png") });

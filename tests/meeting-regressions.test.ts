@@ -170,3 +170,32 @@ test("a gift arriving during a local edit cannot overflow the library or replace
   assert.equal(delivered.world.assets.length,250);assert.deepEqual(delivered.accepted,[gifts[1]]);
   assert.equal(world.assets.length,249);assert.equal(gifts[0].text,"first");
 });
+
+test("reconnecting a world with more than 120 media frames restores every received material", async t => {
+  const server = createServer(), relay = attachMeetingRelay(server);
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const clients: WebSocket[] = [];
+  t.after(async () => {
+    clients.forEach(client => client.terminate()); await relay.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+  const room = createMeetingRoom(15), member = addMeetingMember(room, "aaaaaaaa"), world = structuredClone(member.document);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+  for (let i = 0; i < 130; i++) world.assets.push({ id: `received-${i}`, name: "받은 이미지", shape: "sphere", color: "#111111", solid: false, received: true,
+    image: `data:image/png;base64,${Buffer.concat([png, Buffer.from(String(i))]).toString("base64")}` });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const socket = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}/whistle/meeting?room=media-burst&id=aaaaaaaa&token=media-burst-private-token`);
+    clients.push(socket);
+    const codec = createMeetingCodec(), messages: MeetingMessage[] = [];
+    socket.on("message", bytes => { const message = codec.decode<MeetingMessage>(bytes.toString()); if (message) messages.push(message); });
+    await once(socket, "open");
+    const frames = codec.encode({ type: "publish", world }); assert.ok(frames.length > 120);
+    for (const frame of frames) socket.send(frame);
+    for (let i = 0; i < 400 && !messages.some(m => m.type === "state" && m.view.documentReady); i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual(messages.filter(m => m.type === "error"), []);
+    const restored = messages.find(m => m.type === "state" && m.view.documentReady);
+    assert.ok(restored?.type === "state", "the complete publish must not be silently dropped");
+    assert.deepEqual(restored.view.ownWorld.assets, world.assets);
+    socket.close(); await once(socket, "close");
+  }
+});

@@ -68,7 +68,7 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
         if (entry.sockets.get(id) !== ws || closing) return;
         if (binary) { ws.close(1003); return; }
         if (Date.now() - frameStart > 1000) { frameStart = Date.now(); messages = 0; }
-        if (++messages > 120) return;
+        if (++messages > 1024) { ws.close(1008, "Too many messages"); return; }
         entry.queue = entry.queue.then(() => {
         if (entry.sockets.get(id) !== ws) return;
         try {

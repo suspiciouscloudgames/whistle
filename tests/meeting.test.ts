@@ -404,3 +404,41 @@ test("a new arrival preserves a disconnected neighbor during the reconnect grace
   assert.deepEqual(meetingView(r,"a").recipients,["c"]);
   assert.equal(meetingView(r,"a").connections[0].id,gate.id);
 });
+
+test("presence clocks and movement do not invalidate connection UI, but connection and turn changes do", async () => {
+  const { sameMeetingPresence, sameMeetingPosition } = await import("../lib/meeting-client.ts");
+  const original = { peers: [{ id: "a", slot: 0, playing: true, online: true, player: { x: 19, z: 10, yaw: 0, grounded: true } }],
+    canWhistle: false, onlineCount: 1, turn: { owner: "a", partner: "b", startedAt: 1000, endsAt: 61000, serverNow: 1000 } };
+  const moved = structuredClone(original); moved.peers[0].player.x++;
+  moved.turn.serverNow += 80;
+  assert.equal(sameMeetingPresence(original, moved), true);
+  for (const changed of [{ ...original, onlineCount: 2 }, { ...original, canWhistle: true },
+    { ...original, turn: { ...original.turn, owner: "b", endsAt: 121000 } },
+    { ...original, peers: [{ ...original.peers[0], online: false }] }])
+    assert.equal(sameMeetingPresence(original, changed), false);
+  const p = original.peers[0].player;
+  assert.equal(sameMeetingPosition(p, { ...p }), true);
+  assert.equal(sameMeetingPosition(p, { ...p, x: p.x + .00001 }), true);
+  for (const changed of [{ ...p, x: p.x + .01 }, { ...p, yaw: .1 }, { ...p, grounded: false }, { ...p, falling: true }])
+    assert.equal(sameMeetingPosition(p, changed), false);
+});
+
+test("reconnecting after walking home keeps the current safe position instead of replaying the return teleport", async () => {
+  const { resumeMeetingPosition } = await import("../lib/meeting-client.ts");
+  const r = setup(); use(r, "a", author(r, "b")); const gate = open(r, "a", "b");
+  const view = meetingView(r, "a");
+  view.reset = { id: 5, reason: "disconnect", player: { x: gate.x, z: gate.z, yaw: 0, grounded: true } };
+  const home = { ...meetingGlobal(0, MEETING_START), yaw: 1, grounded: true };
+  const resumed = resumeMeetingPosition(view, home);
+  assert.equal(resumed.reset.id, 5);
+  assert.deepEqual(resumed.reset.player, home);
+  for (const unsafe of [null, { ...home, grounded: false }, { ...home, falling: true }, view.reset.player, { ...home, x: 32 }])
+    assert.equal(resumeMeetingPosition(view, unsafe), view);
+  for (const tile of [{ height: 0, surface: "plain" as const, void: true }, { height: 0, surface: "plain" as const, hole: true }]) {
+    const missing = structuredClone(view);
+    missing.ownWorld.terrain!.tiles[MEETING_START.z * 12 + MEETING_START.x] = tile;
+    assert.equal(resumeMeetingPosition(missing, home), missing);
+  }
+  const floorReset = { ...view, reset: { ...view.reset, reason: "floor" as const } };
+  assert.equal(resumeMeetingPosition(floorReset, home), floorReset);
+});

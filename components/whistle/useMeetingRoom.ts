@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { localMeetingView, retireOfflineMeetingFootings, type MeetingMessage, type MeetingPresence, type MeetingPosition, type MeetingWhistle } from "@/lib/meeting";
 import { createMeetingCodec } from "@/lib/meeting-wire";
 import type { World } from "@/lib/world";
-import { meetingSocketURL } from "@/lib/meeting-client";
+import { meetingSocketURL, sameMeetingPosition, sameMeetingPresence, resumeMeetingPosition } from "@/lib/meeting-client";
 import type { MeteorClock } from "@/lib/meteors";
 
 const createId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2,"0")).join("");
@@ -33,6 +33,8 @@ export function useMeetingRoom(key: string) {
   const socket = useRef<WebSocket | null>(null);
   const online = useRef(false);
   const lastPosition = useRef<MeetingPosition | null>(null);
+  const lastSent = useRef<{ player: MeetingPosition; playing: boolean; reset: number } | null>(null);
+  const lastPresence = useRef<MeetingPresence | null>(null);
   const codec = useRef(createMeetingCodec());
   const resetId = useRef(0);
   const nightSky = useRef(false);
@@ -55,6 +57,8 @@ export function useMeetingRoom(key: string) {
         setStatus("offline");setError("연결 서버 주소를 확인해 주세요.");return;
       }
       socket.current = ws;
+      lastSent.current = null;
+      lastPresence.current = null;
       connecting = setTimeout(() => ws.close(), 15_000);
       codec.current = createMeetingCodec();
       ws.onopen = () => {
@@ -73,14 +77,21 @@ export function useMeetingRoom(key: string) {
         }
         if (message.type === "whistle") { listeners.current.forEach(listener => listener(message.whistle)); return; }
         online.current=true;
-        setStatus("online"); setPresence(message.presence);
+        setStatus("online");
+        const previous = lastPresence.current;
+        lastPresence.current = message.presence;
+        if (!previous || !sameMeetingPresence(previous, message.presence)) setPresence(message.presence);
         if (message.presence.meteors) meteorClock.current = {
           timeline: message.presence.meteors.timeline, server: message.presence.meteors.now, local: performance.now(),
         };
-        if(message.presence.turn)setTurnClock({server:message.presence.turn.serverNow,local:performance.now()});
+        if(message.presence.turn && (!previous || previous.turn?.owner !== message.presence.turn.owner || previous.turn?.endsAt !== message.presence.turn.endsAt))
+          setTurnClock({server:message.presence.turn.serverNow,local:performance.now()});
         if (message.type === "state") {
           clearTimeout(connecting);
           delay = 1000;
+          if (!previous) message.view = resumeMeetingPosition(message.view, lastPosition.current);
+          lastSent.current = null;
+          if (resetId.current !== message.view.reset.id) lastPosition.current = message.view.reset.player;
           resetId.current = message.view.reset.id;
           setError("");
           setView(message.view);
@@ -105,9 +116,10 @@ export function useMeetingRoom(key: string) {
   }, [key,session,enabled]);
   const send = useCallback((message: object) => {
     if (socket.current?.readyState === WebSocket.OPEN) {
-      try { for (const frame of codec.current.encode(message)) socket.current.send(frame); }
+      try { for (const frame of codec.current.encode(message)) socket.current.send(frame); return true; }
       catch (error) { setError((error as Error).message); }
     }
+    return false;
   }, []);
   const restart = useCallback((world:World) => {
     send({type:"leave"});
@@ -127,7 +139,11 @@ export function useMeetingRoom(key: string) {
   const position = useCallback((player: MeetingPosition, playing: boolean) => {
     lastPosition.current=player;
     if(!online.current)setView(current=>retireOfflineMeetingFootings(current,player));
-    send({ type: "position", player, playing, resetId:resetId.current });
+    if (!online.current || !socket.current || socket.current.bufferedAmount > 64 * 1024) return;
+    const previous = lastSent.current;
+    if (previous && previous.playing === playing && previous.reset === resetId.current && sameMeetingPosition(previous.player, player)) return;
+    if (send({ type: "position", player, playing, resetId:resetId.current }))
+      lastSent.current = { player: { ...player }, playing, reset: resetId.current };
   }, [send]);
   const sky = useCallback((eligible: boolean) => {
     if (nightSky.current === eligible) return;
@@ -138,5 +154,5 @@ export function useMeetingRoom(key: string) {
     listeners.current.add(listener);
     return () => { listeners.current.delete(listener); };
   }, []);
-  return { key, documentId, view, presence, status, error, enabled, setMultiplayer, send, restart, position, subscribeWhistle, rejected, turnClock, meteorClock, sky };
+  return { key, documentId, view, presence, status, error, enabled, setMultiplayer, send, restart, position, positionRef: lastPosition, subscribeWhistle, rejected, turnClock, meteorClock, sky };
 }
