@@ -15,9 +15,11 @@ const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url || "/", "http://localhost");
     const path = decodeURIComponent(url.pathname);
-    if (path === "/" || path === "/whistle") { response.writeHead(302, { Location: `/whistle/${url.search}` }).end(); return; }
-    if (!path.startsWith("/whistle/")) { response.writeHead(404).end(); return; }
-    let file = resolve(root, path.slice("/whistle/".length) || "index.html");
+    if (path === "/whistle" || path === "/whistle/" || path === "/whistle/index.html") {
+      response.writeHead(302, { Location: `/${url.search}` }).end(); return;
+    }
+    if (path !== "/" && !path.startsWith("/whistle/")) { response.writeHead(404).end(); return; }
+    let file = resolve(root, path === "/" ? "index.html" : path.slice("/whistle/".length));
     if (!file.startsWith(resolve(root) + sep)) { response.writeHead(404).end(); return; }
     if ((await stat(file)).isDirectory()) file = resolve(file, "index.html");
     const info = await stat(file);
@@ -29,7 +31,7 @@ const server = createServer(async (request, response) => {
 const relay = attachPortalRelay(server);
 const meetingRelay = attachMeetingRelay(server);
 const port = Number(process.env.PORT ?? 5173);
-server.listen(port, process.env.HOST ?? "0.0.0.0", () => console.log(`Whistle: http://localhost:${port}/whistle/`));
+server.listen(port, process.env.HOST ?? "0.0.0.0", () => console.log(`Whistle: http://localhost:${port}/`));
 const stop = async () => { relay.close(); await meetingRelay.close(); server.close(); server.closeAllConnections(); };
 process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
