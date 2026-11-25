@@ -6,16 +6,117 @@ import { WebSocket } from "ws";
 import * as THREE from "three";
 import { attachMeetingRelay } from "../scripts/meeting/relay.ts";
 import { createMeetingRoom, addMeetingMember, publishMeeting, meetingView, meetingWorld, moveMeeting, meetingVisibleMembers,
-  MEETING_SIZE, connectionCells, advanceMeetingTurns, meetingTurn, TURN_DURATION, type MeetingMessage } from "../lib/meeting.ts";
+  MEETING_SIZE, connectionCells, advanceMeetingTurns, meetingTurn, TURN_DURATION, type MeetingMessage, type MeetingPresence } from "../lib/meeting.ts";
+import { MeetingTrail, TRAIL_CAPACITY, TRAIL_LENGTH_TILES, TRAIL_LIFETIME_MS } from "../lib/meeting-trail.ts";
+import { createPeerTrailLine } from "../components/whistle/PeerTrailLine.ts";
+import { createWorldDeriver } from "../lib/world-derivation.ts";
 import { createMeetingCodec } from "../lib/meeting-wire.ts";
 import { floorHeight } from "../lib/terrain.ts";
 import { deriveEnvironment } from "../lib/environment.ts";
 import { makeGround, createTerrainCache } from "../components/whistle/TerrainGround.ts";
-import { disposeTerrain } from "./terrain-fixtures.ts";
+import { disposeTerrain, terrainFixtures } from "./terrain-fixtures.ts";
 
 const move=(room:ReturnType<typeof createMeetingRoom>,id:string,x:number,z:number)=>moveMeeting(room,id,{x,z,yaw:0,grounded:true},true);
 const setup=()=>{const room=createMeetingRoom(13);for(const id of ["a","b","c"])addMeetingMember(room,id);return room;};
 const finishTurn=(room:ReturnType<typeof createMeetingRoom>,id:string)=>{const turn=meetingTurn(room,id)!;advanceMeetingTurns(room,turn.endsAt+(turn.owner===id?0:TURN_DURATION));};
+
+function trailPlayers() {
+  const peer = {id:"guest",slot:0,online:true,playing:true,player:{x:4,z:5,yaw:0,grounded:true}};
+  const self = {...peer,id:"host",player:{...peer.player}};
+  const presence: MeetingPresence = {peers:[self,peer],canWhistle:true};
+  const trail = new MeetingTrail();
+  const sample = (time:number) => trail.receive(presence, self.id, peer.id, time);
+  return {peer, self, presence, trail, sample};
+}
+
+test("peer trails require shared play and never join across a warp, an unsupported position or a reconnect", () => {
+  const {peer,self,presence,trail,sample} = trailPlayers();
+  presence.canWhistle = false;
+  sample(0);
+  assert.equal(trail.points.length, 0);
+  presence.canWhistle = true;
+  presence.turn = {owner:self.id,partner:peer.id,startedAt:0,endsAt:60_000,serverNow:5};
+  sample(5);
+  assert.equal(trail.points.length, 0);
+  delete presence.turn;
+  sample(10);
+  peer.player.x += .2;
+  sample(100);
+  const head = trail.points.at(-1)!;
+  self.player.x += .5;
+  peer.player.yaw += 1;
+  sample(400);
+  assert.equal(trail.points.at(-1), head);
+  assert.equal(head.time, 100);
+  peer.player.x += 5;
+  sample(480);
+  assert.deepEqual(trail.points.map(p=>p.x), [peer.player.x]);
+  peer.online = false; sample(500);
+  peer.online = true; peer.player.x += .15; sample(510);
+  assert.deepEqual(trail.points.map(p=>p.distance), [0]);
+  peer.playing = false; sample(520);
+  assert.equal(trail.points.length, 0);
+  peer.playing = true; sample(540);
+  peer.player.x += .15; sample(570);
+  const takeoff = trail.points.at(-1);
+  peer.player.grounded = false; peer.player.x += .1; sample(600);
+  assert.equal(trail.points.at(-1), takeoff);
+  peer.player.grounded = true; sample(680);
+  assert.deepEqual(trail.points.map(p=>p.time), [680]);
+  trail.receive(presence,self.id,undefined,700);
+  assert.equal(trail.points.length, 0);
+  sample(720); peer.player.z += .2; sample(2500);
+  assert.deepEqual(trail.points.map(p=>p.time), [2500]);
+  self.playing = false; sample(2510);
+  assert.equal(trail.points.length, 0);
+});
+
+test("trail length follows bends, stays above the floor and fades on the same GPU buffers", () => {
+  const {peer,trail,sample} = trailPlayers();
+  const world = terrainFixtures().flat;
+  world.terrain!.floating = true;
+  for (const tile of world.terrain!.tiles) tile.height = 2;
+  const derive = createWorldDeriver(), ground = derive(world);
+  const {line,update} = createPeerTrailLine();
+  const position = line.geometry.getAttribute("position") as THREE.BufferAttribute;
+  sample(0);
+  for (let i=1; i<=20; i++) {
+    peer.player.x += i%4 < 2 ? .18 : -.18;
+    sample(i*80);
+  }
+  const head = trail.points.at(-1)!;
+  const distance = head.distance - trail.points[0].distance;
+  assert.ok(distance > 1.5 && distance <= TRAIL_LENGTH_TILES);
+  update(trail,world,ground,head.time);
+  assert.equal(line.visible,true);
+  assert.equal(line.castShadow || line.receiveShadow || line.material.lights,false);
+  assert.equal(line.material.depthTest,true);
+  assert.equal(line.geometry.drawRange.count,trail.points.length);
+  assert.equal(line.material.uniforms.lemon.value.getHexString(),"f3ef91");
+  const last = line.geometry.drawRange.count-1, taper = line.geometry.getAttribute("taper");
+  const floor = floorHeight(world,head.x,head.z,ground.structures)!;
+  assert.ok(Math.abs(position.getY(last) - floor - .18) < .001);
+  assert.ok(taper.getX(0) > taper.getX(last) && taper.getY(0) > taper.getY(last));
+  const version = position.version;
+  update(trail,world,ground,head.time+750);
+  assert.equal(line.material.uniforms.elapsed.value,.5);
+  assert.equal(position.version,version);
+  update(trail,world,ground,head.time+TRAIL_LIFETIME_MS);
+  assert.equal(line.visible,false);
+  assert.equal(line.geometry.drawRange.count,0);
+  for (let i=1; i<=100; i++) {
+    peer.player.z += .01;
+    sample(head.time+TRAIL_LIFETIME_MS+i*5);
+  }
+  assert.equal(trail.points.length,TRAIL_CAPACITY);
+  update(trail,world,ground,trail.points.at(-1)!.time);
+  assert.equal(line.geometry.getAttribute("position"),position);
+  const changed = structuredClone(world);
+  changed.terrain!.tiles.forEach(tile=>{tile.void=true;});
+  update(trail,changed,derive(changed),trail.points.at(-1)!.time);
+  assert.equal(line.visible,false);
+  line.geometry.dispose(); line.material.dispose();
+});
 
 test("four players open only their paired worlds and every crossing has continuous support",()=>{
   const room=setup();addMeetingMember(room,"d");

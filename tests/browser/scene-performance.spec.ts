@@ -155,13 +155,17 @@ test("cached water reflections avoid unrelated matrix updates and follow camera 
     const root = "/whistle/";
     const THREE = await import(root + "node_modules/three/build/three.module.js");
     const { makeWaterReflection } = await import(root + "components/whistle/WaterReflection.ts");
+    const { createPeerTrailLine } = await import(root + "components/whistle/PeerTrailLine.ts");
     const renderer = new THREE.WebGLRenderer(), scene = new THREE.Scene(), terrain = new THREE.Group();
     scene.add(terrain);
+    const { line } = createPeerTrailLine();
+    scene.add(line); line.visible = true;
+    const trailInReflections: boolean[] = [];
     const unrelated = new THREE.Object3D(); terrain.add(unrelated);
     let updates = 0, draws = 0;
     const update = unrelated.updateMatrixWorld.bind(unrelated), render = renderer.render.bind(renderer);
     unrelated.updateMatrixWorld = (force: boolean) => { updates++; update(force); };
-    renderer.render = (...args: any[]) => { draws++; render(...args); };
+    renderer.render = (...args: any[]) => { draws++; trailInReflections.push(line.visible); render(...args); };
     const water = (x: number, level: number) => {
       const material = new THREE.ShaderMaterial({ uniforms: { hasReflection: { value: 0 }, reflectionMap: { value: null }, reflectionMatrix: { value: new THREE.Matrix4() } } });
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), material);
@@ -185,9 +189,9 @@ test("cached water reflections avoid unrelated matrix updates and follow camera 
     look(15); reflection.update(renderer, scene, camera, terrain, 200);
     const moved = { draws, high: high.material.uniforms.hasReflection.value, matrix: high.material.uniforms.reflectionMatrix.value.toArray() };
     const error = renderer.getContext().getError();
-    for (const mesh of [low, high]) { mesh.geometry.dispose(); mesh.material.dispose(); }
+    for (const mesh of [low, high, line]) { mesh.geometry.dispose(); mesh.material.dispose(); }
     reflection.dispose(); renderer.dispose();
-    return { initial, cached, selected, outside, matrix, moved, error };
+    return { initial, cached, selected, outside, matrix, moved, error, trailInReflections, trailVisible: line.visible };
   });
   expect(result.initial.draws).toBe(1);
   expect(result.initial.low).toBe(1);
@@ -197,5 +201,7 @@ test("cached water reflections avoid unrelated matrix updates and follow camera 
   expect(result.moved.draws).toBe(3);
   expect(result.moved.high).toBe(1);
   expect(result.moved.matrix).not.toEqual(result.matrix);
+  expect(result.trailInReflections).toEqual([false, false, false]);
+  expect(result.trailVisible).toBe(true);
   expect(result.error).toBe(0);
 });

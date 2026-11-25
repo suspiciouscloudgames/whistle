@@ -1,11 +1,12 @@
 import * as THREE from "three";
-import { MEETING_LEMON, connectionCells, type MeetingSignal, type ConnectionTile, type MeetingPeer } from "@/lib/meeting";
+import { MEETING_LEMON, connectionCells, type MeetingSignal, type ConnectionTile } from "@/lib/meeting";
+import type { MeetingTrail } from "@/lib/meeting-trail";
 import { floorHeight } from "@/lib/terrain";
 import type { World } from "@/lib/world";
 
 export type MeetingVisuals = {
   approaches: (ConnectionTile & {online?:boolean})[];
-  signals: MeetingSignal[]; connections: (ConnectionTile & { online?: boolean })[]; peers: MeetingPeer[];
+  signals: MeetingSignal[]; connections: (ConnectionTile & { online?: boolean })[]; peerTrail?: MeetingTrail;
 };
 export function createMeetingScene(size: number) {
   const group = new THREE.Group(); group.name = "meeting";

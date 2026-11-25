@@ -192,9 +192,6 @@ export function EditorBoard({
                 {!!actor?.marks.length && (
                   <span className="cell-mark">{actor.marks[0]}</span>
                 )}
-                {x === world.start.x && z === world.start.z && (
-                  <span className="start-marker" />
-                )}
                 {reaction && (
                   <span
                     key={`reaction-${feedback!.id}`}

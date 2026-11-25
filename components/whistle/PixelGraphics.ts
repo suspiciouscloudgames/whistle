@@ -75,7 +75,7 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
       for (const surface of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
         let color = maskMaterials.get(surface);
         if (color?.name === object.name) continue;
-        const keep = ["symbol-content", "surface-image", "dithered-sky", "meteor-shower", "connection-surface", "approach-outline"].includes(object.name);
+        const keep = ["symbol-content", "surface-image", "dithered-sky", "meteor-shower", "connection-surface", "approach-outline", "peer-movement-trail"].includes(object.name);
         const stone = object.name === "scattered-stones" || object.name === "stones-surface-image";
         const kind = ["grass-understory", "hole-bottom", "world-horizon"].includes(object.name) ? 0
           : ["continuous-ground", "distant-ground", "terrain-bank"].includes(object.name) ? 1

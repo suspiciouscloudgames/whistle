@@ -4,6 +4,7 @@ import { createMeetingCodec } from "@/lib/meeting-wire";
 import type { World } from "@/lib/world";
 import { meetingSocketURL, sameMeetingPosition, sameMeetingPresence, resumeMeetingPosition } from "@/lib/meeting-client";
 import type { MeteorClock } from "@/lib/meteors";
+import { MeetingTrail } from "@/lib/meeting-trail";
 
 const createId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2,"0")).join("");
 function identity(key:string, fresh=false) {
@@ -30,6 +31,7 @@ export function useMeetingRoom(key: string) {
   const [error, setError] = useState("");
   const [rejected, setRejected] = useState<{world: World; revision: number} | null>(null);
   const [turnClock, setTurnClock] = useState({ server: Date.now(), local: performance.now() });
+  const [peerTrail] = useState(() => new MeetingTrail());
   const socket = useRef<WebSocket | null>(null);
   const online = useRef(false);
   const lastPosition = useRef<MeetingPosition | null>(null);
@@ -43,6 +45,7 @@ export function useMeetingRoom(key: string) {
   useEffect(() => {
     if (!enabled) return;
     let stopped = false, delay = 1000;
+    let partner: string | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined, connecting: ReturnType<typeof setTimeout> | undefined;
     const {id,token}=session;
     const connect = () => {
@@ -57,6 +60,7 @@ export function useMeetingRoom(key: string) {
         setStatus("offline");setError("연결 서버 주소를 확인해 주세요.");return;
       }
       socket.current = ws;
+      partner = undefined;
       lastSent.current = null;
       lastPresence.current = null;
       connecting = setTimeout(() => ws.close(), 15_000);
@@ -76,6 +80,8 @@ export function useMeetingRoom(key: string) {
           return;
         }
         if (message.type === "whistle") { listeners.current.forEach(listener => listener(message.whistle)); return; }
+        if (message.type === "state") partner = message.view.recipients[0];
+        peerTrail.receive(message.presence, id, partner, performance.now());
         online.current=true;
         setStatus("online");
         const previous = lastPresence.current;
@@ -100,6 +106,7 @@ export function useMeetingRoom(key: string) {
       ws.onclose = event => {
         clearTimeout(connecting);
         if (stopped || socket.current !== ws) return;
+        peerTrail.clear();
         online.current=false;
         setView(current=>retireOfflineMeetingFootings(current,lastPosition.current??current.reset.player));
         setStatus("offline");
@@ -112,8 +119,8 @@ export function useMeetingRoom(key: string) {
       ws.onerror = () => ws.close();
     };
     connect();
-    return () => { stopped = true; clearTimeout(retry); clearTimeout(connecting); socket.current?.close(); socket.current = null; online.current=false; };
-  }, [key,session,enabled]);
+    return () => { stopped = true; clearTimeout(retry); clearTimeout(connecting); socket.current?.close(); socket.current = null; online.current=false; peerTrail.clear(); };
+  }, [key,session,enabled,peerTrail]);
   const send = useCallback((message: object) => {
     if (socket.current?.readyState === WebSocket.OPEN) {
       try { for (const frame of codec.current.encode(message)) socket.current.send(frame); return true; }
@@ -125,11 +132,12 @@ export function useMeetingRoom(key: string) {
     send({type:"leave"});
     socket.current?.close();socket.current=null;
     online.current=false;lastPosition.current=null;
+    peerTrail.clear();
     const next=identity(key,true);
     resetId.current=0;
     setView(localMeetingView(next.id,world));
     setPresence({peers:[],canWhistle:false});setStatus(enabled?"connecting":"offline");setError("");setSession(next);
-  },[key,send,enabled]);
+  },[key,send,enabled,peerTrail]);
   const setMultiplayer = useCallback((next:boolean, world:World) => {
     if (next === enabled) return;
     if (!next) restart({...world,connectionFootings:[]});
@@ -154,5 +162,5 @@ export function useMeetingRoom(key: string) {
     listeners.current.add(listener);
     return () => { listeners.current.delete(listener); };
   }, []);
-  return { key, documentId, view, presence, status, error, enabled, setMultiplayer, send, restart, position, positionRef: lastPosition, subscribeWhistle, rejected, turnClock, meteorClock, sky };
+  return { key, documentId, view, presence, status, error, enabled, setMultiplayer, send, restart, position, subscribeWhistle, rejected, turnClock, meteorClock, sky, peerTrail };
 }

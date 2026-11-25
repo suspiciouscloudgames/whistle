@@ -28,6 +28,7 @@ import { advanceMeteors, createMeteorTimeline, meteorElapsed, meteorSeed, METEOR
 import { WEATHER } from "@/lib/weather";
 import { createPortalScene } from "./PortalScene";
 import { createMeetingScene, type MeetingVisuals } from "./MeetingScene";
+import { createPeerTrailLine } from "./PeerTrailLine";
 import type { WorldPortal } from "@/lib/portals";
 import { daylightAt } from "@/lib/daylight";
 import {
@@ -363,6 +364,8 @@ export default function Scene({
     const portalScene = createPortalScene(world.size);
     scene.add(portalScene.group);
     const meetingScene = createMeetingScene(world.size);
+    const peerTrail = mode === "play" && meetingRef.current ? createPeerTrailLine() : undefined;
+    if (peerTrail) meetingScene.group.add(peerTrail.line);
     scene.add(meetingScene.group);
     const symbolExperience = makeSymbolExperience();
     const contentPresentation = makeContentPresentation();
@@ -1006,6 +1009,7 @@ export default function Scene({
         dt: document.hidden ? 0 : dt, time, reducedMotion, daylight: currentDay.daylight,
       });
       meetingScene.sync(meetingRef.current, worldRef.current, camera, time);
+      peerTrail?.update(meetingRef.current?.peerTrail, worldRef.current, derivationRef.current, time);
       contentPresentation.update(camera, worldRef.current.size, time, mode === "overview", reducedMotion);
       weatherScene.update(time, worldRef.current.weather ?? "clear", camera, currentDay.daylight, mode === "overview");
       meteorScene.update(showerElapsed, showerSeed, camera, reducedMotion);

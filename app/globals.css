@@ -228,27 +228,6 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.start-marker {
-  width: 7px;
-  height: 7px;
-  border: 1px solid #111;
-  background: #fff;
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  pointer-events: none;
-}
-.start-marker:after {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: -5px;
-  width: 1px;
-  height: 4px;
-  background: #111;
-}
 .canvas-tools {
   display: flex;
   align-items: center;
@@ -498,6 +477,7 @@ p {
   width: 3px;
   height: 3px;
   background: #111;
+  opacity: 0.25;
   position: absolute;
   top: 50%;
   left: 50%;
@@ -517,7 +497,7 @@ p {
   border: 0;
   color: #fff;
   mix-blend-mode: difference;
-  opacity: 0.6;
+  opacity: 0.4;
 }
 
 .meteor-debug {
@@ -567,6 +547,7 @@ p {
   height: 40px;
   border-radius: 50%;
   background: currentColor;
+  opacity: 0.5;
   pointer-events: none;
 }
 .movement-modes {
@@ -1061,13 +1042,6 @@ p {
   }
   .cell-mark {
     font-size: 7px;
-  }
-  .start-marker {
-    width: 6px;
-    height: 6px;
-  }
-  .start-marker:after {
-    left: 1.5px;
   }
   .play-shell {
     height: calc(100dvh - 64px);
@@ -1924,7 +1898,6 @@ p {
 }
 @keyframes effect-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes effect-fade-out { from { opacity: 1; } to { opacity: 0; } }
-.has-effect .start-marker { left: auto; top: 3px; right: 3px; transform: none; z-index: 3; }
 .result-tile ~ .tile-height {
   color: #000;
   background: #fff;

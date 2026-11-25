@@ -4,7 +4,6 @@
 .meeting-map-signal{position:absolute;transform:translate(-50%,-50%);font-size:25px;line-height:1;color:#111;text-shadow:0 0 2px #fff,0 0 2px #fff}
 .meeting-map-connection{position:absolute;box-sizing:border-box;border:1px solid #111;background:var(--meeting-lemon);transition:background-color .35s;display:grid;place-items:center}
 .meeting-map-connection i{width:5px;height:5px;background:#111;border-radius:50%}
-.meeting-map-player{position:absolute;transform:translate(-50%,-50%);width:6px;height:6px;border:1px solid #fff;outline:1px solid #111;background:#111;border-radius:50%}
 
 .meeting-map-connection.disconnected{background:#111}
 .symbol-library-item.received-material{background:var(--meeting-lemon);border-radius:4px;padding:3px}

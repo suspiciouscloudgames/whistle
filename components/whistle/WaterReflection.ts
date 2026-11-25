@@ -42,7 +42,7 @@ export function makeWaterReflection() {
         mirror.updateMatrixWorld(true);
         const hidden: THREE.Object3D[] = [];
         scene.traverse(object => {
-          if (object.visible && ["generated-water", "grassland", "weather", "generated-fog", "symbol-light"].includes(object.name)) {
+          if (object.visible && ["generated-water", "grassland", "weather", "generated-fog", "symbol-light", "peer-movement-trail"].includes(object.name)) {
             object.visible = false;
             hidden.push(object);
           }
