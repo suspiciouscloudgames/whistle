@@ -120,8 +120,7 @@ test("surface attachment uses existing grass or bare ground without planting any
     const mesh = (globalThis as any).__testScene.getObjectByName("grass-surface-image");
     return mesh.material.userData.surfaceProjection.opacity.value as number;
   });
-  const opacity = await coatingOpacity();
-  await expect.poll(async () => Math.abs(await coatingOpacity() - opacity), { timeout: 12_000 }).toBeGreaterThan(.2);
+  await expect.poll(coatingOpacity).toBe(1);
   expect(await page.evaluate(() => (globalThis as any).__testScene.getObjectByName("grass-surface-image").material.opacity)).toBe(1);
   await page.screenshot({ path: testInfo.outputPath("grass-surface-play.png") });
   await page.getByRole("button", { name: "만들기로 돌아가기", exact: true }).click();

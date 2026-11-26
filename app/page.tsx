@@ -12,8 +12,8 @@ import {
   type Event,
   type Simulation,
 } from "@/lib/world";
-import { emptySymbol, initializeWorkshop, completeSymbol, refillSymbols, TURN_HINT } from "@/lib/workshop";
-import { uncountedTiles, TURN_TILE_HINT, TURN_TILE_LIMIT } from "@/lib/turn-tiles";
+import { emptySymbol, initializeWorkshop, completeSymbol, refillSymbols } from "@/lib/workshop";
+import { uncountedTiles, TURN_TILE_LIMIT } from "@/lib/turn-tiles";
 import { TurnBar, useWorkshopTurn } from "@/components/whistle/TurnBar";
 import type { TerrainTool } from "@/lib/tile";
 import { downloadWorld } from "@/lib/sharing";
@@ -137,8 +137,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     const current = getWorld();
     incoming.assets = incoming.assets.map(a => ({...a, originalImage:current.assets.find(b => b.id === a.id && b.image === a.image)?.originalImage}));
     loadDocument(incoming, incoming);
-    notify(meeting.rejected.message);
-  }, [meeting.rejected, getWorld, loadDocument, notify]);
+  }, [meeting.rejected, getWorld, loadDocument]);
   const sharedIds = useMemo(() => new Set([
     ...(meeting.view.materials.map(a => a.id) ?? []),...world.assets.filter(a=>a.received).map(a=>a.id),
   ]), [meeting.view.materials,world.assets]);
@@ -193,10 +192,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   const allowTurnTiles = (next: World) => {
     if (!turnTiles) return true;
     const added = uncountedTiles(next, turnTiles);
-    if (turnTiles.added.length + added.length > TURN_TILE_LIMIT) {
-      notify(TURN_TILE_HINT);
-      return false;
-    }
+    if (turnTiles.added.length + added.length > TURN_TILE_LIMIT) return false;
     if (added.length) {
       for (const i of added) localTiles.add(i);
       turnTiles.added.push(...added);
@@ -205,7 +201,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     return true;
   };
   const handleImport = (imported: World) => {
-    if (!turn.canPlace) { notify(TURN_HINT); return; }
+    if (!canPlaceNow()) return;
     if(imported.size!==12){notify("12×12 맵을 사용합니다.");return;}
     if (authoredMaterialCount(imported, sharedIds) > MEETING_MATERIAL_LIMIT) { notify(MEETING_MATERIAL_MESSAGE); return; }
     imported.connectionFootings=[];
@@ -239,18 +235,17 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     window.addEventListener("pagehide",send);
     return()=>{clearTimeout(timer);window.removeEventListener("pagehide",send);};
   },[world,ready,meeting.send,meeting.status,getWorld]);
-  const blocked = () => notify(TURN_HINT);
   const canPlaceNow = () => {
     const current = meeting.enabled ? meeting.presence.turn : undefined;
     return !current || meeting.status === "online" && current.owner === meeting.view.id &&
       meeting.turnClock.server + performance.now() - meeting.turnClock.local < current.endsAt;
   };
   const undo = () => {
-    if (!canPlaceNow()) { blocked(); return; }
+    if (!canPlaceNow()) return;
     if (undoDocument(allowTurnTiles)) setSelected(null);
   };
   const redo = () => {
-    if (!canPlaceNow()) { blocked(); return; }
+    if (!canPlaceNow()) return;
     if (redoDocument(allowTurnTiles)) setSelected(null);
   };
   const enter = () => {
@@ -286,7 +281,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     [],
   );
   const paint = (cells: number[], erase: boolean) => {
-    if (!canPlaceNow()) { endStroke(); blocked(); return; }
+    if (!canPlaceNow()) { endStroke(); return; }
     const before = getWorld();
     const kind = contentKind(before.assets.find(a => a.id === activeAsset));
     if (!erase && kind) {
@@ -294,8 +289,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
       const added = cells.filter(i => !before.objects.some(o => o.asset === activeAsset && o.x === i % before.size && o.z === Math.floor(i / before.size))).length;
       if (count + added > MAX_CONTENT_COUNT) notify(contentLimitMessage[kind]);
     }
-    const limited = paintDocument(cells, erase, { layer: activeAsset ? "symbols" : "tiles", assetId: activeAsset ?? undefined, surface, terrainTool, turnTiles }, allowTurnTiles);
-    if (limited) notify(TURN_TILE_HINT);
+    paintDocument(cells, erase, { layer: activeAsset ? "symbols" : "tiles", assetId: activeAsset ?? undefined, surface, terrainTool, turnTiles }, allowTurnTiles);
     const after = getWorld();
     if (before !== after) {
       const sound = editSound(before, after, cells, deriveWorld(after));
@@ -333,7 +327,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   };
   const deleteSymbol = () => {
     if (!editingAsset) return;
-    if (!canPlaceNow()) { blocked(); return; }
+    if (!canPlaceNow()) return;
     change(w => {
       if (selected) w.objects = w.objects.filter(o => o.id !== selected);
       else {
@@ -366,7 +360,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   };
   if(loading)return <SceneLoading />;
   return (
-    <main className={`studio ${playing ? "playing" : ""}${turn.canPlace ? "" : " placement-waiting"}`}
+    <main className={`studio ${playing ? "playing" : ""}`}
       data-meeting-id={meeting.view.id} data-meeting-slot={meeting.view.slot} data-meeting-status={meeting.status} data-meeting-joined={meeting.view.joined.length}>
       <EditorToolbar
         playing={playing}
@@ -433,7 +427,6 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             onTimeOfDayChange={timeOfDay => change(w => { w.timeOfDay = timeOfDay; })}
             onWeatherChange={weather => change(w => { w.weather = weather; })}
             canPlace={turn.canPlace}
-            onBlocked={blocked}
             onSelectSymbol={id => { setPlacingStart(false); setPlacingAsset(activeAsset === id ? null : id); }}
             onEditSymbol={id => { const asset = world.assets.find(asset => asset.id === id); if (asset) editSymbol(asset); }}
             onToggleStart={() => { setPlacingAsset(null); setPlacingStart(!placingStart); }}
@@ -452,10 +445,9 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             onUndo={undo}
             onRedo={redo}
             canPlace={turn.canPlace}
-            onBlocked={blocked}
             turnBar={<TurnBar {...turn} tilesLeft={turnTiles ? TURN_TILE_LIMIT - turnTiles.added.length : undefined} />}
             onMoveSymbol={(id, index) => {
-              if (!canPlaceNow()) { blocked(); return; }
+              if (!canPlaceNow()) return;
               endStroke(); moveDocumentSymbol(id, index);
             }}
             onPaint={paint}

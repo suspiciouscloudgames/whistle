@@ -105,7 +105,6 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
     const first = !strokeBase.current;
     if (first) strokeBase.current = copyDocument(worldRef.current);
     const next = copyDocument(strokeBase.current!);
-    let limited = false;
     if (layer === "tiles") {
       next.terrain ??= flatTerrain(next.size);
       const waterEdits = new Set<number>();
@@ -128,7 +127,7 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
           continue;
         if (terrainTool === "erase") next.terrain.floating = true;
         if (counted && terrainTool === "surface" && next.terrain.tiles[i].void && !counted.has(i)) {
-          if (remaining === 0) { limited = true; continue; }
+          if (remaining === 0) continue;
           remaining--;
           counted.add(i);
         }
@@ -149,14 +148,13 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
     refillSymbols(next);
     if (samePlacement(worldRef.current, next) || (allow && !allow(next))) {
       if (first) strokeBase.current = null;
-      return limited;
+      return;
     }
     if (first) commit(next);
     else {
       revealChanges(next);
       applyWorld(next);
     }
-    return limited;
   }, [applyWorld, commit, revealChanges]);
 
   const endStroke = useCallback(() => { strokeBase.current = null; }, []);

@@ -2,8 +2,9 @@ import { test, expect, type Page } from "@playwright/test";
 import { savedWorld } from "./world-storage";
 import { createMeetingWorld, type MeetingMessage, type MeetingTurn } from "../../lib/meeting";
 import { createMeetingCodec } from "../../lib/meeting-wire";
+import { TURN_HINT } from "../../lib/workshop";
+import { TURN_TILE_HINT } from "../../lib/turn-tiles";
 
-const hint="배치는 내 차례에 할 수 있어요. 편집은 언제든 할 수 있어요.";
 const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","base64");
 async function ready(page:Page) {
   await expect(page.locator("main")).toHaveAttribute("data-meeting-status","online");
@@ -110,8 +111,20 @@ test("one-minute turns lock placement, keep editors open and deliver before meet
     await expect(a.locator('.workspace .turn-fill')).toHaveCSS("background-color","rgb(255, 255, 255)");
     await expect(b.locator('.workspace .turn-fill')).toHaveCSS("background-color","rgb(243, 239, 145)");
     await expect(b.locator('.workspace .turn-status')).not.toContainText(/\d/);
-    await expect(b.getByRole("button",{name:"높이기",exact:true})).toHaveAttribute("aria-disabled","true");
-    await b.locator('[data-cell="0"]').click();await expect(b.getByText(hint,{exact:true})).toBeVisible();
+    const raise = b.getByRole("button",{name:"높이기",exact:true});
+    await expect(raise).toBeDisabled();
+    await raise.hover();
+    await expect(raise).toHaveCSS("cursor","default");
+    const cell = b.locator('[data-cell="0"]');
+    const beforeHover = await cell.screenshot();
+    await cell.hover();
+    await expect(cell).toHaveCSS("cursor","default");
+    expect(await cell.screenshot()).toEqual(beforeHover);
+    const marker = b.getByRole("button",{name:"장면 제목 입력",exact:true});
+    await marker.hover();
+    await expect(marker).toHaveCSS("cursor","default");
+    await cell.click();
+    await expect(b.locator(".toast")).toHaveCount(0);
     expect((await savedWorld(b)).terrain!.tiles[0].void).toBe(true);
     await title(b,"기다리며 쓰는 제목");
     await expect(b.locator('.toast').filter({hasText:"데이터"})).toHaveCount(0);
@@ -130,7 +143,7 @@ test("one-minute turns lock placement, keep editors open and deliver before meet
     await a.getByRole("button",{name:"저장",exact:true}).click();
     await expect.poll(async()=>(await savedWorld(a)).assets.some(asset=>asset.text==="차례가 바뀌어도 남은 초안")).toBe(true);
     await expect(a.locator('.workspace [data-turn]')).toHaveAttribute("data-turn","other");
-    await a.locator('[data-cell="1"]').click();await expect(a.getByText(hint,{exact:true})).toBeVisible();
+    await a.locator('[data-cell="1"]').click();await expect(a.locator(".toast")).toHaveCount(0);
     await b.getByRole("button",{name:"바닥",exact:true}).click();await b.locator('[data-cell="0"]').click();
     await expect.poll(async()=>(await savedWorld(b)).terrain!.tiles[0].void).not.toBe(true);
     await a.screenshot({path:info.outputPath("other-turn.png"),fullPage:true});
@@ -138,6 +151,22 @@ test("one-minute turns lock placement, keep editors open and deliver before meet
     await cb.close();
     await expect(a.locator('.workspace [data-turn]')).toHaveCount(0);
   } finally {await ca.close();await cb.close();}
+});
+
+test("turn rejections restore the server document silently", async ({page}) => {
+  let deliver: (message: MeetingMessage) => void;
+  await page.routeWebSocket(/\/whistle\/meeting\?/, socket => {
+    socket.connectToServer();
+    deliver = message => socket.send(JSON.stringify(message));
+  });
+  await page.goto(`?meeting=turn-rejection-${Date.now()}`); await ready(page);
+  const world = await savedWorld(page);
+  for (const [i, message] of [TURN_HINT, TURN_TILE_HINT].entries()) {
+    const title = `복원된 장면 ${i + 1}`;
+    deliver!({type:"error", message, world:{...world,title}});
+    await expect.poll(async () => (await savedWorld(page)).title).toBe(title);
+    await expect(page.locator(".toast")).toHaveCount(0);
+  }
 });
 
 test("a drag stops at three new tiles while editing and reusing those tiles stay available", async ({browser,baseURL}) => {
@@ -155,12 +184,14 @@ test("a drag stops at three new tiles while editing and reusing those tiles stay
     await expect(label).toHaveText("배치할 차례 / 남은 타일 수: 1");
     await drag(a,'[data-cell="2"]',5);
     await expect(label).toHaveText("배치할 차례 / 남은 타일 수: 0");
+    await expect(a.locator(".toast")).toHaveCount(0);
     const row = async () => (await savedWorld(a)).terrain!.tiles.slice(0,6).map(tile => !tile.void);
     await expect.poll(row).toEqual([true,true,true,false,false,false]);
     await a.getByRole("button",{name:"되돌리기",exact:true}).click();
     await expect.poll(row).toEqual([true,true,false,false,false,false]);
     await a.locator('[data-cell="4"]').click();
-    await expect(a.locator(".toast").filter({hasText:"새 타일은 한 차례에 3칸까지"})).toBeVisible();
+    await expect(a.locator(".toast")).toHaveCount(0);
+    await expect.poll(row).toEqual([true,true,false,false,false,false]);
     await a.getByRole("button",{name:"다시 실행",exact:true}).click();
     await expect.poll(row).toEqual([true,true,true,false,false,false]);
     await a.getByRole("button",{name:"거침",exact:true}).click();
@@ -224,7 +255,7 @@ test("off-turn edits survive reload and switching between solo and multiplayer",
     await expect(b.locator('.workspace [data-turn]')).toHaveAttribute("data-turn","other");
     expect((await savedWorld(b)).assets).toEqual(saved.assets);
     expect((await savedWorld(b)).objects).toEqual(saved.objects);
-    await expect(b.locator('.toast').filter({hasText:hint})).toHaveCount(0);
+    await expect(b.locator('.toast').filter({hasText:TURN_HINT})).toHaveCount(0);
   } finally {await ca.close();await cb.close();}
 });
 

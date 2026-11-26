@@ -38,7 +38,6 @@ type Props = {
   overlay?: ReactNode;
   canPlace?: boolean;
   onMoveSymbol?: (id: string, index: number) => void;
-  onBlocked?: () => void;
   turnBar?: ReactNode;
 };
 
@@ -47,7 +46,7 @@ export function EditorBoard({
   onPaint, onEnd, placingAsset, placingStart, onOpenSymbol, onUndo, onRedo,
   portals = [],
   overlay,
-  canPlace = true, onMoveSymbol, onBlocked, turnBar,
+  canPlace = true, onMoveSymbol, turnBar,
 }: Props) {
   const { t } = useLanguage();
   const { structures, environment } = derivation;
@@ -186,7 +185,7 @@ export function EditorBoard({
                   const color = empty ? "#777777" : asset.glyphColor ?? asset.color;
                   return <SymbolMarker key={placed.id} id={placed.id} index={i} size={world.size} offset={offset} layer={layer}
                     empty={empty} kind={type} label={`${t(asset.prompt?.title ? "장면 제목" : type === "text" ? "텍스트" : type === "sound" ? "사운드" : "이미지")} ${t(empty ? "입력" : "편집")}`}
-                    canPlace={canPlace} onOpen={() => onOpenSymbol(i, placed.id)} onMove={onMoveSymbol} onBlocked={onBlocked}>
+                    canPlace={canPlace} onOpen={() => onOpenSymbol(i, placed.id)} onMove={onMoveSymbol}>
                     {type === "sound" ? <SoundGlyph color={color} filled={!empty} /> : <SiteGlyph kind={kind} filled={!empty} color={color} />}
                   </SymbolMarker>;
                 })}
@@ -211,29 +210,28 @@ export function EditorBoard({
   );
 }
 
-function SymbolMarker({ id, index, size, offset, layer, empty, kind, label, canPlace, onOpen, onMove, onBlocked, children }: {
+function SymbolMarker({ id, index, size, offset, layer, empty, kind, label, canPlace, onOpen, onMove, children }: {
   id: string; index: number; size: number; offset: number; layer: number; empty: boolean; kind: string; label: string;
-  canPlace: boolean; onOpen: () => void; onMove?: (id: string, index: number) => void; onBlocked?: () => void; children: ReactNode;
+  canPlace: boolean; onOpen: () => void; onMove?: (id: string, index: number) => void; children: ReactNode;
 }) {
-  const gesture = useRef<{x:number;y:number;moved:boolean;blocked:boolean} | null>(null);
+  const gesture = useRef<{x:number;y:number;moved:boolean} | null>(null);
   const [dragging, setDragging] = useState(false);
   return <span className={`generated-site symbol-marker${empty ? " empty-symbol" : ""}${dragging ? " symbol-dragging" : ""}`}
     role="button" tabIndex={0} aria-label={label} data-symbol-site={id} data-symbol-kind={kind} data-empty-symbol={empty}
     style={{marginLeft:offset,marginTop:-offset,zIndex:5+layer}}
     onPointerDown={e => {
       e.stopPropagation(); if(e.button!==0)return;
-      gesture.current={x:e.clientX,y:e.clientY,moved:false,blocked:false}; e.currentTarget.setPointerCapture(e.pointerId);
+      gesture.current={x:e.clientX,y:e.clientY,moved:false}; e.currentTarget.setPointerCapture(e.pointerId);
     }}
     onPointerMove={e => {
       e.stopPropagation(); const g=gesture.current; if(!g || Math.hypot(e.clientX-g.x,e.clientY-g.y)<7)return;
       g.moved=true;
-      if(!canPlace){if(!g.blocked)onBlocked?.();g.blocked=true;return;}
-      setDragging(true);
+      if(canPlace)setDragging(true);
     }}
     onPointerUp={e => {
       e.stopPropagation(); const g=gesture.current; gesture.current=null;setDragging(false);if(!g)return;
       if(!g.moved){onOpen();return;}
-      if(!canPlace){if(!g.blocked)onBlocked?.();return;}
+      if(!canPlace)return;
       const rect=e.currentTarget.closest(".world-grid")!.getBoundingClientRect();
       const x=Math.floor((e.clientX-rect.left)/rect.width*size),z=Math.floor((e.clientY-rect.top)/rect.height*size);
       if(x>=0&&z>=0&&x<size&&z<size)onMove?.(id,z*size+x);
@@ -244,7 +242,7 @@ function SymbolMarker({ id, index, size, offset, layer, empty, kind, label, canP
     onKeyDown={e=>{
       if(e.key==="Enter"||e.key===" "){e.preventDefault();e.stopPropagation();onOpen();}
       const delta:Record<string,number>={ArrowLeft:-1,ArrowRight:1,ArrowUp:-size,ArrowDown:size};
-      if(e.altKey&&e.key in delta){e.preventDefault();e.stopPropagation();if(!canPlace){onBlocked?.();return;}
+      if(e.altKey&&e.key in delta){e.preventDefault();e.stopPropagation();if(!canPlace)return;
         if(e.key==="ArrowLeft"&&index%size===0||e.key==="ArrowRight"&&index%size===size-1)return;
         onMove?.(id,index+delta[e.key]);}
     }}>{children}</span>;

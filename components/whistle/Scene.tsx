@@ -104,12 +104,13 @@ function makeObject(asset: Asset): THREE.Group {
 
   if (!asset.image) return g;
   const texture = loadContentTexture(asset);
+  const animated = asset.display && !asset.sound && asset.placement !== "surface" && asset.placement !== "field";
   const picture = mesh(
     new THREE.PlaneGeometry(1.5, 1.5),
     new THREE.MeshBasicMaterial({
       map: texture,
       transparent: true,
-      alphaTest: 0.05,
+      alphaTest: animated ? .001 : .05,
       side: THREE.DoubleSide,
       toneMapped: false,
     }),
@@ -356,7 +357,6 @@ export default function Scene({
     scene.add(meetingScene.group);
     const symbolExperience = makeSymbolExperience();
     const contentPresentation = makeContentPresentation();
-    scene.add(contentPresentation.particles);
     let pointerStart: {id: number; x: number; y: number; time: number; moved: boolean} | null = null;
     let falling: { originY: number; elapsed: number } | null = null;
     let jump: ReturnType<typeof launchJump> | null = null;
@@ -466,7 +466,7 @@ export default function Scene({
           const base = floorHeight(worldRef.current, a.x, a.z, structures) ?? a.site?.height ?? -0.4;
           const water = environmentAt(terrain.environment, a.x, a.z).water;
           ground = { terrain: terrain.group, x: a.x, z: a.z, siteHeight: a.site?.height,
-            height: Math.max(base, water ?? -Infinity), afloat: water !== null && water > base };
+            height: Math.max(base, water ?? -Infinity), afloat: !asset.text?.trim() && water !== null && water > base };
           placementGround.set(model, ground);
         }
         model.position.set(
@@ -927,8 +927,8 @@ export default function Scene({
               }
             } else {
               if (respawnFade === 0) {
-                const passed = contentPresentation.passContent(fromX, fromZ, player.x, player.z, feet, time);
-                for (let i = 0; i < passed; i++) showers.push(createMeteorShower(time, player.yaw, pitch));
+                const passed = contentPresentation.passContent(fromX, fromZ, player.x, player.z, feet);
+                if (passed && showers.at(-1)?.startedAt !== time) showers.push(createMeteorShower(time, player.yaw, pitch));
               }
               const local = environmentAt(
                 terrain.environment,

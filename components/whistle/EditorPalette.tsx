@@ -20,7 +20,6 @@ type Props = {
   onTimeOfDayChange: (time: TimeOfDay) => void;
   onWeatherChange: (weather: Weather) => void;
   canPlace: boolean;
-  onBlocked: () => void;
   onSelectSymbol: (id: string) => void;
   onEditSymbol: (id: string) => void;
   onToggleStart: () => void;
@@ -28,38 +27,38 @@ type Props = {
 };
 
 export function EditorPalette({ weather, timeOfDay, surface, terrainTool, placingStart, symbols, selectedSymbol, sharedSymbolIds, startLocked,
-  onSelectSurface, onSelectTerrainTool, onWeatherChange, onTimeOfDayChange, canPlace, onBlocked, onSelectSymbol, onEditSymbol, onToggleStart, extraTools }: Props) {
+  onSelectSurface, onSelectTerrainTool, onWeatherChange, onTimeOfDayChange, canPlace, onSelectSymbol, onEditSymbol, onToggleStart, extraTools }: Props) {
   const { t } = useLanguage();
   return <aside className="palette direct-palette generated-palette" aria-label={t("재료")}>
-    <div className={`tile-palette${canPlace ? "" : " placement-locked"}`}>
+    <div className="tile-palette">
       <div className="surface-choices" aria-label={t("타일")}>
         {(["plain", "soft", "slick", "rough"] as const).map(id => {
           const entry = SURFACES.find(entry => entry.id === id)!;
           return <button key={id} className={`surface-choice ${surface === id && terrainTool === "surface" && !placingStart && !selectedSymbol ? "active" : ""}`}
             aria-label={t(entry.name)} aria-pressed={surface === id && terrainTool === "surface" && !placingStart && !selectedSymbol}
-            aria-disabled={!canPlace} onClick={() => canPlace ? onSelectSurface(id) : onBlocked()}><span className={`surface-swatch surface-${id}`} /></button>;
+            disabled={!canPlace} onClick={() => onSelectSurface(id)}><span className={`surface-swatch surface-${id}`} /></button>;
         })}
         <button className={`surface-choice clear-tile ${terrainTool === "hole" && !placingStart && !selectedSymbol ? "active" : ""}`}
           aria-label={t("꺼짐")} aria-pressed={terrainTool === "hole" && !placingStart && !selectedSymbol}
-          aria-disabled={!canPlace} onClick={() => canPlace ? onSelectTerrainTool("hole") : onBlocked()}><HoleGlyph className="hole-glyph" /></button>
+          disabled={!canPlace} onClick={() => onSelectTerrainTool("hole")}><HoleGlyph className="hole-glyph" /></button>
         <button className={`surface-choice ${terrainTool === "erase" && !placingStart && !selectedSymbol ? "active" : ""}`}
           aria-label={t("타일 지우기")} aria-pressed={terrainTool === "erase" && !placingStart && !selectedSymbol}
-          aria-disabled={!canPlace} onClick={() => canPlace ? onSelectTerrainTool("erase") : onBlocked()}><span className="surface-swatch empty-swatch" /></button>
+          disabled={!canPlace} onClick={() => onSelectTerrainTool("erase")}><span className="surface-swatch empty-swatch" /></button>
       </div>
       <div className="height-choices" aria-label={t("바닥 높이")}>
         {(["raise", "lower"] as const).map(tool => <button key={tool} aria-label={t(tool === "raise" ? "높이기" : "낮추기")}
           aria-pressed={terrainTool === tool && !placingStart && !selectedSymbol}
-          className={terrainTool === tool && !placingStart && !selectedSymbol ? "active" : ""} aria-disabled={!canPlace} onClick={() => canPlace ? onSelectTerrainTool(tool) : onBlocked()}>{tool === "raise" ? "↑" : "↓"}</button>)}
+          className={terrainTool === tool && !placingStart && !selectedSymbol ? "active" : ""} disabled={!canPlace} onClick={() => onSelectTerrainTool(tool)}>{tool === "raise" ? "↑" : "↓"}</button>)}
       </div>
       {!startLocked && <button className={`site-start ${placingStart ? "active" : ""}`} aria-label={t("시작점")}
-        aria-pressed={placingStart} onClick={onToggleStart}>◎</button>}
+        aria-pressed={placingStart} disabled={!canPlace} onClick={onToggleStart}>◎</button>}
     </div>
     {symbols.length > 0 && <div className="generated-symbols" aria-label={t("만든 기호")}>
       <div className="symbol-library">{symbols.map(symbol => <div key={symbol.id} className={`symbol-library-item${sharedSymbolIds?.has(symbol.id) ? " received-material" : ""}`}
         data-material-origin={sharedSymbolIds?.has(symbol.id) ? "received" : "own"}>
         <button data-symbol-asset={symbol.id} className={selectedSymbol === symbol.id ? "active" : ""}
           aria-pressed={selectedSymbol === symbol.id} aria-label={`${t("배치")}: ${symbol.text ?? symbol.name}`}
-          aria-disabled={!canPlace} onClick={() => canPlace ? onSelectSymbol(symbol.id) : onBlocked()}>
+          disabled={!canPlace} onClick={() => onSelectSymbol(symbol.id)}>
           {symbol.sound ? <span className="sound-symbol"><SoundGlyph color={symbol.glyphColor ?? symbol.color} /><span>{symbol.name}</span></span> : symbol.text !== undefined ? <span style={{ color: symbol.textColor }}>{symbol.text.slice(0, 2)}</span> : <img src={symbol.image} alt="" />}
         </button>
         {<button className="symbol-edit" aria-label={t("편집")} onClick={() => onEditSymbol(symbol.id)}>

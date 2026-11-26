@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { contentImage } from "../../lib/text-image.ts";
+import { setTextOrder } from "./ContentReveal.ts";
+import { sceneText } from "../../lib/text-image.ts";
 import type { Asset } from "../../lib/world.ts";
 
 const artwork = new Map<string, HTMLCanvasElement>();
@@ -39,14 +40,15 @@ function pixelArtwork(image: HTMLImageElement) {
 }
 
 export function loadContentTexture(asset: Asset, onAspect?: (aspect: number) => void) {
-  const isText = !!asset.text?.trim();
-  const texture = new THREE.TextureLoader().load(contentImage(asset)!, loaded => {
+  const text = asset.text?.trim() ? sceneText(asset.text, asset.textColor) : undefined;
+  const texture = new THREE.TextureLoader().load(text?.image ?? asset.image!, loaded => {
     const image = loaded.image as HTMLImageElement;
-    if (!isText) loaded.image = pixelArtwork(image);
+    if (!text) loaded.image = pixelArtwork(image);
     onAspect?.(image.naturalWidth / image.naturalHeight);
   });
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.magFilter = isText ? THREE.NearestFilter : THREE.LinearFilter;
+  if (text?.order) setTextOrder(texture, text.order);
+  texture.magFilter = text ? THREE.NearestFilter : THREE.LinearFilter;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   return texture;
 }

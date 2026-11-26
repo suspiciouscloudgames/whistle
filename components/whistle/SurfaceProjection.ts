@@ -9,6 +9,7 @@ export function projectSurfaceImage(material: THREE.Material, center: THREE.Vect
   material.onBeforeCompile = (shader, renderer) => {
     previous.call(material, shader, renderer);
     shader.uniforms.skinOpacity = projection.opacity;
+    if (projection.baseColor) shader.uniforms.skinBark = { value: projection.baseColor };
     shader.uniforms.skinCenter = projection.center;
     shader.uniforms.skinSize = projection.size;
     shader.uniforms.skinAngle = projection.angle;
@@ -22,17 +23,17 @@ export function projectSurfaceImage(material: THREE.Material, center: THREE.Vect
       #endif
       skinPosition = ${tree ? "skinPoint.xyz" : "(modelMatrix * skinPoint).xyz"};
     `);
-    shader.fragmentShader = "varying vec3 skinPosition; uniform vec3 skinCenter; uniform float skinSize, skinAngle, skinOpacity, skinAspect, skinEdgeFade;\n" + shader.fragmentShader;
+    shader.fragmentShader = "uniform vec3 skinBark; varying vec3 skinPosition; uniform vec3 skinCenter; uniform float skinSize, skinAngle, skinOpacity, skinAspect, skinEdgeFade;\n" + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", `
       #ifdef USE_MAP
         vec3 skinOffset = skinPosition - skinCenter;
-        ${tree ? "vec2 skinUv = vec2(atan(skinOffset.x,skinOffset.z)/6.2831853+.5+skinAngle/6.2831853, skinOffset.y/skinSize);" : `
+        ${tree ? "vec2 skinUv = vec2(atan(skinOffset.x,skinOffset.z)/6.2831853+.5+skinAngle/6.2831853, skinOffset.y/skinSize); skinUv.x = fract(skinUv.x);" : `
           float cs=cos(skinAngle), sn=sin(skinAngle);
           vec2 skinExtent=skinSize*vec2(min(1.0,skinAspect),1.0/max(1.0,skinAspect));
           vec2 skinUv = vec2(cs*skinOffset.x+sn*skinOffset.z, sn*skinOffset.x-cs*skinOffset.z)/skinExtent+.5;
         `}
         vec4 skinColor = texture2D(map, skinUv);
-        ${tree ? "diffuseColor.rgb *= mix(vec3(1.),skinColor.rgb,skinColor.a * skinOpacity);" : `
+        ${tree ? "diffuseColor.rgb *= mix(skinBark,skinColor.rgb,skinColor.a * skinOpacity);" : `
           skinColor.a *= step(0.,skinUv.x)*step(skinUv.x,1.)*step(0.,skinUv.y)*step(skinUv.y,1.);
           if(skinEdgeFade>0.0){
             vec2 edge=smoothstep(vec2(0.0),vec2(skinEdgeFade),min(skinUv,1.0-skinUv));

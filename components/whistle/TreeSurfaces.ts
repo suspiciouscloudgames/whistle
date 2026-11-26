@@ -39,7 +39,7 @@ export function makeTreeSurfaces(world: World, environment: Environment, clock: 
     mesh.userData.interactionOccluder = true;
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
-    return { mesh, tree, bark: profile.bark, key: "", wind: environmentAt(environment, tree.x, tree.z) };
+    return { mesh, tree, bark: profile.bark, key: "", hasText: false, wind: environmentAt(environment, tree.x, tree.z) };
   });
   return {
     group,
@@ -49,6 +49,7 @@ export function makeTreeSurfaces(world: World, environment: Environment, clock: 
         const actor = actors.find(a => !a.removed && a.x === entry.tree.x && a.z === entry.tree.z &&
           assets.some(asset => asset.id === a.asset && asset.image && (asset.placement === "surface" || asset.placement === "field")));
         const asset = actor && assets.find(asset => asset.id === actor.asset);
+        entry.hasText = !!asset?.text?.trim();
         const projection = entry.mesh.material.userData.surfaceProjection;
         projection.angle.value = (actor?.rotation ?? 0) * Math.PI / 180;
         projection.size.value = (entry.mesh.geometry.boundingBox!.max.y - entry.mesh.geometry.boundingBox!.min.y) * (actor?.scale ?? 1);
@@ -71,8 +72,8 @@ export function makeTreeSurfaces(world: World, environment: Environment, clock: 
     },
     update(time: number, reducedMotion: boolean) {
       motion.value = reducedMotion ? 0 : 1;
-      for (const { mesh, wind } of trees) {
-        const sway = reducedMotion ? 0 : Math.sin(time * .0012 + mesh.position.x * .8 + mesh.position.z * .6);
+      for (const { mesh, wind, hasText } of trees) {
+        const sway = reducedMotion || hasText ? 0 : Math.sin(time * .0012 + mesh.position.x * .8 + mesh.position.z * .6);
         mesh.rotation.z = -sway * (.001 + wind.windX * .004);
         mesh.rotation.x = sway * (.001 + wind.windZ * .004);
       }

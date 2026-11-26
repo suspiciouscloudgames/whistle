@@ -25,12 +25,11 @@
 .turn-fill{height:100%;background:#fff;transform-origin:left center;transition:transform .1s linear}
 .other-turn .turn-fill{background:#f3ef91}
 .tile-palette{position:relative}
-.placement-locked button[aria-disabled="true"],.symbol-library button[data-symbol-asset][aria-disabled="true"]{opacity:.38;cursor:not-allowed}
-.symbol-marker{touch-action:none;cursor:grab}
+.tile-palette button:disabled,.symbol-library button[data-symbol-asset]:disabled{opacity:.38;color:inherit;cursor:default}
+.paint-grid .symbol-marker{touch-action:none;cursor:default}
 .symbol-marker.empty-symbol{width:84%;height:84%;box-sizing:border-box;background:#fff;border:1px solid #777;border-radius:3px}
 .symbol-marker:focus-visible{outline:2px solid #555;outline-offset:2px;border-radius:3px}
-.symbol-marker.symbol-dragging{opacity:.5;cursor:grabbing}
-.placement-waiting .symbol-marker{cursor:pointer}
+.paint-grid .symbol-marker.symbol-dragging{opacity:.5;cursor:grabbing}
 .empty-symbol .site-glyph{filter:none;opacity:1}
 @media(prefers-reduced-motion:reduce){.turn-fill{transition:none}}
 .canvas-panel>.canvas-area{height:auto;min-height:0;max-height:none;aspect-ratio:auto}

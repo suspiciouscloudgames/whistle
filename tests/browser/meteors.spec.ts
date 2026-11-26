@@ -24,10 +24,11 @@ async function open(page: Page, timeOfDay: TimeOfDay = "midnight", weather: Weat
         if (mode === "play") {
           const active = visibleShowers[0];
           const showerElapsed = active ? (time - active.startedAt) / 1000 : null;
-          globalThis.__meteorFrame = { elapsed: showerElapsed, count: active?.streaks.length ?? 0 };
+          globalThis.__meteorFrame = { elapsed: showerElapsed, count: active?.streaks.length ?? 0, showers: visibleShowers.length };
           if (active) globalThis.__sawShower = true;
-          globalThis.__capturePass?.(renderer.domElement, showerElapsed);
-          if (showerElapsed >= .9 && showerElapsed <= 1.5) globalThis.__captureMeteor?.(renderer.domElement);
+          if (active && showerElapsed >= active.streaks[0].duration * .25 && showerElapsed <= active.streaks[0].duration * .7) {
+            globalThis.__captureMeteor?.(renderer.domElement);
+          }
         }`);
     await route.fulfill({ response, body });
   });
@@ -44,14 +45,14 @@ async function open(page: Page, timeOfDay: TimeOfDay = "midnight", weather: Weat
   await expect.poll(async () => (await pdMessages(page, "whistle-player position")).length, { timeout: 30_000 }).toBeGreaterThan(0);
   return errors;
 }
-const frame = (page: Page) => page.evaluate(() => (globalThis as any).__meteorFrame as {elapsed: number | null; count: number});
+const frame = (page: Page) => page.evaluate(() => (globalThis as any).__meteorFrame as {elapsed: number | null; count: number; showers: number});
 const meteorMessages = (page: Page) => pdMessages(page, "whistle-event fallingstar");
 
-for (const kind of ["text", "image"] as const) test(`walking past authored ${kind} scatters just that placement and starts a shower in ordinary play`, async ({ page }, info) => {
+for (const kind of ["text", "image"] as const) test(`walking past authored ${kind} reveals, fades after crossing and reappears on return`, async ({ page }) => {
   const world = createMeetingWorld(17);
   world.terrain = flatTerrain(world.size);
   const title = world.assets.find(a => a.prompt?.title)!;
-  title.placement = "upright";
+  title.placement = kind === "text" ? "floating" : "upright";
   if (kind === "text") Object.assign(title, { text: "여기, 지금", textColor: "#209047" });
   else {
     delete title.text;
@@ -66,52 +67,54 @@ for (const kind of ["text", "image"] as const) test(`walking past authored ${kin
   }
   const first = world.objects.find(o => o.asset === title.id)!;
   Object.assign(first, { id: "pass-first", x: world.start.x, z: world.start.z - 2 });
-  world.objects.push({ ...first, id: "pass-copy", x: world.start.x + 3 });
+  world.objects.push({ ...first, id: "pass-copy", x: world.start.x + 2 });
+  world.assets.push({ ...title, id: "fixed-art", prompt: undefined, placement: kind === "text" ? "surface" : "field" });
+  world.objects.push({ ...first, id: "attached-copy", asset: "fixed-art", x: world.start.x + 1 });
   const errors = await open(page, "noon", kind === "image" ? "rain" : "clear", undefined, false, world);
+  const attachedOpacity = () => page.evaluate(() => {
+    const model = (globalThis as any).__meteorPlayScene?.children.find((o: any) => o.userData.placementId?.endsWith("attached-copy"));
+    return model?.getObjectByName("surface-image")?.material.opacity;
+  });
   const opacity = (id: string) => page.evaluate(id => {
     const model = (globalThis as any).__meteorPlayScene?.children.find((o: any) => o.userData.placementId?.endsWith(id));
     return model?.getObjectByName("symbol-content")?.material.opacity as number | undefined;
   }, id);
   await expect.poll(() => opacity("pass-first")).toBe(1);
-  expect((await frame(page)).elapsed).toBeNull();
-  await page.evaluate(() => {
-    (globalThis as any).__capturePass = (source: HTMLCanvasElement, elapsed: number | null) => {
-      if (elapsed === null || elapsed < .20 || elapsed > .72) return;
-      const scene = (globalThis as any).__meteorPlayScene;
-      if (!scene.getObjectByName("passage-particles")) return;
-      const canvas = document.createElement("canvas");
-      canvas.width = source.width; canvas.height = source.height;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(source, 0, 0);
-      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-      let ink = 0, meteors = 0;
-      for (let i = 0; i < pixels.length; i += 4) {
-        if (pixels[i+1] > pixels[i] + 15 && pixels[i+1] > pixels[i+2] + 15) ink++;
-        if (i < pixels.length / 2 && pixels[i] > pixels[i+1] + 18 && pixels[i] > pixels[i+2] + 18) meteors++;
-      }
-      if (ink > 10 && meteors > 10) {
-        (globalThis as any).__passImage = canvas.toDataURL();
-        delete (globalThis as any).__capturePass;
-      }
-    };
+  const textPose = () => page.evaluate(() => {
+    const model = (globalThis as any).__meteorPlayScene.children.find((o: any) => o.userData.placementId?.endsWith("pass-first"));
+    return model.getObjectByName("symbol-content").matrixWorld.toArray();
   });
-  await page.keyboard.down("w");
-  try {
-    await expect.poll(async () => (await frame(page)).count).toBeGreaterThan(0);
-    expect((await frame(page)).count).toBeLessThanOrEqual(3);
-  } finally { await page.keyboard.up("w"); }
-  await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
-  await expect.poll(() => opacity("pass-first")).toBe(0);
-  expect(await opacity("pass-copy")).toBe(1);
-  await expect.poll(() => page.evaluate(() => !!(globalThis as any).__passImage)).toBe(true);
-  const png = await page.evaluate(() => (globalThis as any).__passImage as string);
-  await writeFile(info.outputPath(kind + "-passage.png"), Buffer.from(png!.split(",")[1], "base64"));
-  await expect.poll(() => page.evaluate(() => !!(globalThis as any).__meteorPlayScene.getObjectByName("passage-particles"))).toBe(false);
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "플레이", exact: true }).click();
-  await expect(page.locator(".play-shell canvas")).toHaveAttribute("data-ready", "true");
-  await expect.poll(() => opacity("pass-first")).toBe(1);
+  const initialPose = kind === "text" ? await textPose() : undefined;
+  await expect.poll(attachedOpacity).toBe(1);
   expect((await frame(page)).elapsed).toBeNull();
+  const playerZ = async () => Number(await page.locator(".play-shell canvas").getAttribute("data-player-z"));
+  const moveUntil = async (key: string, arrived: () => Promise<boolean>) => {
+    await page.keyboard.down(key);
+    try { await expect.poll(arrived, { timeout: 15000, intervals: [50] }).toBe(true); }
+    finally { await page.keyboard.up(key); }
+  };
+  await moveUntil("w", async () => await playerZ() < first.z + .4);
+  expect((await frame(page)).count).toBe(0);
+  expect(await opacity("pass-first")).toBe(1);
+  await moveUntil("w", async () => (await frame(page)).count > 0);
+  expect((await frame(page)).showers).toBe(1);
+  expect((await frame(page)).count).toBeLessThanOrEqual(3);
+  await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
+  await expect.poll(async () => {
+    const alpha = await opacity("pass-first");
+    return alpha !== undefined && alpha > 0 && alpha < .98;
+  }).toBe(true);
+  await expect.poll(() => opacity("pass-first")).toBe(0);
+  if (initialPose) expect(await textPose()).toEqual(initialPose);
+  expect(await attachedOpacity()).toBe(1);
+  expect(await opacity("pass-copy")).toBe(1);
+  await moveUntil("w", async () => await playerZ() < first.z - 4.5);
+  expect(await attachedOpacity()).toBe(1);
+  await moveUntil("s", async () => await playerZ() > first.z - 2.7);
+  await expect.poll(() => opacity("pass-first")).toBe(1);
+  if (initialPose) expect(await textPose()).toEqual(initialPose);
+  expect((await frame(page)).count).toBe(0);
+  await moveUntil("s", async () => (await frame(page)).count > 0);
   expect(errors).toEqual([]);
 });
 
@@ -150,7 +153,6 @@ test("night meteor graphics and Daban sound start together, end together, and st
   await expect.poll(async () => (await frame(page)).elapsed).not.toBeNull();
   await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
   await expect.poll(() => page.evaluate(() => (globalThis as any).__meteorGroup.children[0]?.geometry.drawRange.count ?? 0)).toBeGreaterThan(0);
-  await expect.poll(async () => (await frame(page)).elapsed).toBeGreaterThan(.75);
   await checkRedTrail(page, info, "meteor-night");
   await expect.poll(async () => (await frame(page)).elapsed, { timeout: 16_000 }).toBeNull();
   await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([0]);

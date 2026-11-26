@@ -3,6 +3,8 @@ import { localMeetingView, retireOfflineMeetingFootings, type MeetingMessage, ty
 import { createMeetingCodec } from "@/lib/meeting-wire";
 import type { World } from "@/lib/world";
 import { meetingSocketURL, sameMeetingPosition, sameMeetingPresence, resumeMeetingPosition } from "@/lib/meeting-client";
+import { TURN_HINT } from "@/lib/workshop";
+import { TURN_TILE_HINT } from "@/lib/turn-tiles";
 import { MeetingTrail } from "@/lib/meeting-trail";
 
 const createId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2,"0")).join("");
@@ -28,7 +30,7 @@ export function useMeetingRoom(key: string) {
   const [presence, setPresence] = useState<MeetingPresence>({ peers: [], canWhistle: false });
   const [status, setStatus] = useState<"connecting" | "online" | "offline">("connecting");
   const [error, setError] = useState("");
-  const [rejected, setRejected] = useState<{world: World; revision: number; message: string} | null>(null);
+  const [rejected, setRejected] = useState<{world: World; revision: number} | null>(null);
   const [turnClock, setTurnClock] = useState({ server: Date.now(), local: performance.now() });
   const [peerTrail] = useState(() => new MeetingTrail());
   const socket = useRef<WebSocket | null>(null);
@@ -69,8 +71,8 @@ export function useMeetingRoom(key: string) {
         catch (error) { setError((error as Error).message); return; }
         if (!message) return;
         if (message.type === "error") {
-          setError(message.message);
-          if (message.world) setRejected(previous => ({world:message.world!,revision:(previous?.revision ?? 0)+1,message:message.message}));
+          if (message.message !== TURN_HINT && message.message !== TURN_TILE_HINT) setError(message.message);
+          if (message.world) setRejected(previous => ({world:message.world!,revision:(previous?.revision ?? 0)+1}));
           return;
         }
         if (message.type === "whistle") { listeners.current.forEach(listener => listener(message.whistle)); return; }

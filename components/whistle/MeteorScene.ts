@@ -4,13 +4,13 @@ import { meteorRandom, MAX_METEORS_PER_SHOWER, type MeteorShower } from "../../l
 const CORNERS = [[0, -1], [0, 1], [1, -1], [1, -1], [0, 1], [1, 1]];
 
 function meteorTexture() {
-  const width = 36, height = 9;
+  const width = 64, height = 9;
   const pixels = new Uint8Array(width * height * 4);
   const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
   const random = meteorRandom(94);
   for (let x = 0; x < width; x++) {
     const tail = (x + .5) / width;
-    const radius = Math.min(1, Math.sqrt(tail / .08)) * (1 - .5 * tail);
+    const radius = Math.min(1, Math.sqrt(tail / .05)) * (1 - .5 * tail);
     const center = .12 * Math.sin(tail * 12) + .09 * Math.sin(tail * 23);
     for (let y = 0; y < height; y++) {
       const side = Math.abs((y + .5) * 2 / height - 1 - center);
@@ -86,14 +86,14 @@ export function makeMeteors() {
         const progress = (elapsed - streak.start) / streak.duration;
         if (progress < 0 || progress > 1) continue;
         const fade = Math.min(1, progress * 8, (1 - progress) * 5) * (reducedMotion ? .45 : 1);
-        const distance = progress * streak.travel * (reducedMotion ? .3 : 1);
+        const distance = progress * streak.travel * (reducedMotion ? .15 : 1);
         const { azimuth, elevation } = streak;
         head.set(Math.sin(azimuth) * 65, elevation * 65, -Math.cos(azimuth) * 65);
-        tangent.set(Math.cos(azimuth), -.48, Math.sin(azimuth)).normalize();
+        tangent.set(Math.cos(azimuth), -streak.descent, Math.sin(azimuth)).normalize();
         head.addScaledVector(tangent, distance);
         side.crossVectors(head, tangent).normalize().multiplyScalar(streak.width);
         for (const [tail, sign] of CORNERS) {
-          const length = tail * (reducedMotion ? 2.8 : 7.4);
+          const length = tail * (reducedMotion ? 2.8 : streak.tailLength);
           positions.setXYZ(vertex, head.x - tangent.x * length + side.x * sign,
             head.y - tangent.y * length + side.y * sign, head.z - tangent.z * length + side.z * sign);
           colors.setW(vertex, fade);

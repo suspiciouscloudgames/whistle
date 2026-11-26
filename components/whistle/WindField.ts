@@ -28,7 +28,7 @@ export function makeWindField(world: World, structures: Structure[], environment
           !environment.cells[actor.z * world.size + actor.x]?.grass) return [];
       return [{ actor, asset }];
     });
-    const key = JSON.stringify(targets.map(({ actor, asset }) => [actor.id, actor.x, actor.z, actor.scale, actor.rotation, asset.image]));
+    const key = JSON.stringify(targets.map(({ actor, asset }) => [actor.id, actor.x, actor.z, actor.scale, actor.rotation, asset.image, asset.text]));
     if (key === previousKey) return applied;
     previousKey = key;
     applied = new Set();
@@ -76,7 +76,7 @@ export function makeWindField(world: World, structures: Structure[], environment
       const material = new THREE.MeshStandardMaterial({
         map: texture, vertexColors:true, side: THREE.DoubleSide, roughness: 1, alphaTest: .05, alphaToCoverage: true,
       });
-      addGrassWind(material, time, strength);
+      if (!asset.text?.trim()) addGrassWind(material, time, strength);
       addNeutralGrain(material, "grass", world.terrain?.seed ?? 0);
       projectSurfaceImage(material, new THREE.Vector3(actor.x * 2 - world.size + 1, 0, actor.z * 2 - world.size + 1), 1.5 * actor.scale, actor.rotation);
       material.userData.surfaceProjection.edgeFade.value=asset.text?0:.18;

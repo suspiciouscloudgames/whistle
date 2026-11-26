@@ -1,24 +1,60 @@
 import { MAX_TEXT_LENGTH, type Asset } from "./world.ts";
 import { optimizedImage } from "./image-export.ts";
 
-const renderedText = new Map<string,string>();
+export type TextOrder = { data: Uint8Array<ArrayBuffer>; width: number; height: number; top: number; span: number; count: number };
+type RenderedText = { image: string; order?: TextOrder };
+const renderedText = new Map<string, RenderedText>();
+const segmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : undefined;
+const graphemes = (line: string) => segmenter ? Array.from(segmenter.segment(line), item => item.segment) : Array.from(line);
+
+export function sceneText(value: string, color?: string) {
+  const key = JSON.stringify([value, color]);
+  const cached = renderedText.get(key);
+  if (cached) return cached;
+  const rendered = renderText(value, color, true);
+  if (renderedText.size >= 64) renderedText.delete(renderedText.keys().next().value!);
+  renderedText.set(key, rendered);
+  return rendered;
+}
 
 export function contentImage(asset: Pick<Asset,"image" | "text" | "textColor">) {
-  if (!asset.text?.trim()) return asset.image;
-  const key=JSON.stringify([asset.text,asset.textColor]);
-  const cached=renderedText.get(key);
-  if (cached) return cached;
-  const image=renderText(asset.text,asset.textColor,true);
-  if (renderedText.size >= 64) renderedText.delete(renderedText.keys().next().value!);
-  renderedText.set(key,image);
-  return image;
+  return asset.text?.trim() ? sceneText(asset.text, asset.textColor).image : asset.image;
 }
 
 export function textImage(value: string, color = "#111111"): string {
-  return renderText(value,color);
+  return renderText(value, color).image;
 }
 
-function renderText(value: string, color = "#111111", pixelated = false): string {
+function readingOrder(ctx: CanvasRenderingContext2D, lines: string[], size: number, spacing: number): TextOrder {
+  const width = ctx.canvas.width, height = Math.min(lines.length, width);
+  const rows = lines.map(graphemes);
+  const count = rows.reduce((sum, row) => sum + row.filter(glyph => glyph.trim()).length, 0);
+  const data = new Uint8Array(width * height * 2);
+  let ordinal = 0;
+  for (const [row, glyphs] of rows.entries()) {
+    const offset = Math.floor(row * height / rows.length) * width;
+    const left = (size - ctx.measureText(lines[row]).width) / 2;
+    let prefix = "", x = 0, rank = 0;
+    for (const glyph of glyphs) {
+      prefix += glyph;
+      const end = Math.min(width, Math.round((left + ctx.measureText(prefix).width) * width / size));
+      rank = Math.round(65535 * Math.min(ordinal, count - 1) / Math.max(1, count - 1));
+      for (; x < end; x++) {
+        data[(offset + x) * 2] = rank >>> 8;
+        data[(offset + x) * 2 + 1] = rank & 255;
+      }
+      if (glyph.trim()) ordinal++;
+    }
+    for (; x < width; x++) {
+      data[(offset + x) * 2] = rank >>> 8;
+      data[(offset + x) * 2 + 1] = rank & 255;
+    }
+  }
+  const span = spacing * lines.length / size;
+  return { data, width, height, top: (1 - span) / 2, span, count };
+}
+
+function renderText(value: string, color = "#111111", pixelated = false): RenderedText {
   if (!value.trim()) throw Error("텍스트가 비어 있습니다.");
   if (value.length > MAX_TEXT_LENGTH) throw Error("텍스트가 10,000자를 초과했습니다.");
   const canvas = document.createElement("canvas");
@@ -26,7 +62,7 @@ function renderText(value: string, color = "#111111", pixelated = false): string
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext("2d")!;
   const available = size - 48;
-  const paragraphs = value.split(/\r\n?|\n/);
+  const paragraphs = value.split(/\r\n?|\n/).map(graphemes);
   const fontStyle = (font: number) => `${pixelated ? 600 : 400} ${font}px "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
   const wrap = (font: number) => {
     ctx.font = fontStyle(font);
@@ -68,8 +104,8 @@ function renderText(value: string, color = "#111111", pixelated = false): string
       ink.data[i] = Math.round(Math.min(255, ink.data[i] * 1.12) / 85) * 85;
     }
     ctx.putImageData(ink, 0, 0);
-    return canvas.toDataURL("image/png");
+    return { image: canvas.toDataURL("image/png"), order: readingOrder(ctx, lines, size, spacing) };
   }
   const image = canvas.toDataURL("image/png");
-  return image.length <= 380_000 ? image : optimizedImage(canvas, 280_000);
+  return { image: image.length <= 380_000 ? image : optimizedImage(canvas, 280_000) };
 }

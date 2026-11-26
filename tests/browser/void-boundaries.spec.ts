@@ -199,7 +199,7 @@ test("crossing a lemon footing unlocks both editors and sharing; disconnect retu
     await b.keyboard.press("Escape");
     for (const [page, observed] of [[a, aa], [b, bb]] as const) {
       await expect(page.locator('.turn-status')).toHaveCount(0);
-      await expect(page.getByRole("button", { name: "높이기", exact: true })).toHaveAttribute("aria-disabled", "false");
+      await expect(page.getByRole("button", { name: "높이기", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "높이기", exact: true }).click();
       await page.locator('[data-cell="0"]').click();
       await expect.poll(() => observed.view().ownWorld.terrain!.tiles[0].height).toBe(1);

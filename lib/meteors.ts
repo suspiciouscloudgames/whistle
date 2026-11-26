@@ -11,14 +11,20 @@ export const MAX_METEORS_PER_SHOWER = 3;
 export function createMeteorShower(startedAt: number, heading: number, pitch: number, random = Math.random) {
   const count = 1 + Math.floor(random() * MAX_METEORS_PER_SHOWER);
   const elevation = Math.tan(Math.max(.075, Math.min(1.1, pitch + .18)));
-  const streaks = Array.from({ length: count }, (_, i) => ({
-    start: i * (.45 + random() * .15),
-    duration: 1.6 + random() * .5,
-    azimuth: heading + (i === 0 ? -.09 : (i === 1 ? .22 : -.27)) + (random() - .5) * .12,
-    elevation: elevation + random() * .035,
-    travel: 6 + random() * 5,
-    width: .38 + random() * .18,
-  }));
+  let start = 0;
+  const streaks = Array.from({ length: count }, (_, i) => {
+    if (i > 0) start += 1 + random();
+    return {
+      start,
+      duration: 1.15 + random() * .35,
+      azimuth: heading - .27 + random() * .46,
+      elevation: elevation + .085 + random() * .09,
+      descent: .38 + random() * .4,
+      travel: 12 + random() * 5,
+      tailLength: 12 + random() * 4,
+      width: .38 + random() * .18,
+    };
+  });
   const endsAt = startedAt + 1000 * Math.max(...streaks.map(streak => streak.start + streak.duration));
   return { startedAt, endsAt, streaks };
 }

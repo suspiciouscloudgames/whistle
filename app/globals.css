@@ -1427,6 +1427,11 @@ p {
   touch-action: none;
   user-select: none;
 }
+.paint-grid .grid-cell,
+.tile-palette button {
+  appearance: none;
+  cursor: default;
+}
 .paint-grid .grid-cell {
   border-color: #d9d9d6;
 }

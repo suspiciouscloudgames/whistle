@@ -126,6 +126,78 @@ test.describe("pixel lettering", () => {
   });
 });
 
+test("Korean glyphs appear in order and fade in place at slightly different rates while an image fades evenly", async ({page}) => {
+  await page.goto(".");
+  const result = await page.evaluate(async () => {
+    const root = new URL("./", document.baseURI).href;
+    const THREE = await import(root + "node_modules/three/build/three.module.js");
+    const { loadContentTexture } = await import(root + "components/whistle/ContentTexture.ts");
+    const { bindContentReveal } = await import(root + "components/whistle/ContentReveal.ts");
+    const renderer = new THREE.WebGLRenderer({preserveDrawingBuffer:true});
+    renderer.setSize(128,128);
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-1,1,1,-1,.1,10);
+    camera.position.z = 2;
+    const source = document.createElement("canvas");
+    source.width = source.height = 128;
+    const ctx = source.getContext("2d")!;
+    ctx.fillStyle = "white"; ctx.fillRect(0,0,128,128);
+    async function inspect(asset: object) {
+      const map = await new Promise<any>(resolve => {
+        const texture = loadContentTexture(asset, () => resolve(texture));
+      });
+      const material = new THREE.MeshBasicMaterial({map,transparent:true,toneMapped:false,side:THREE.DoubleSide});
+      const geometry = new THREE.PlaneGeometry(2, 2);
+      const mesh = new THREE.Mesh(geometry,material);
+      const {progress, departure} = bindContentReveal(material);
+      scene.add(mesh);
+      const read = (value: number, back = false, exit = 0) => {
+        progress.value = value;
+        departure.value = exit;
+        material.opacity = ("text" in asset ? 1 : value) * (1 - THREE.MathUtils.smoothstep(exit, 0, 1));
+        mesh.rotation.y = back ? Math.PI : 0;
+        renderer.render(scene,camera); ctx.drawImage(renderer.domElement,0,0);
+        const data = ctx.getImageData(0,0,128,128).data, sums = [0,0,0,0];
+        for (let y=0;y<128;y++) for (let x=0;x<128;x++) sums[Number(y>=64)*2+Number(x>=64)] += data[(y*128+x)*4];
+        return sums;
+      };
+      const full = read(1);
+      const before = ctx.getImageData(0,0,128,128).data;
+      const fading = read(1, false, .55).map((sum, i) => sum / full[i]);
+      const after = ctx.getImageData(0,0,128,128).data;
+      let movedPixels = 0;
+      for (let i=0;i<after.length;i+=4) if (before[i] === 0 && after[i] > 0) movedPixels++;
+      const samples = [read(0),read(.22),read(.55),read(.22,true)].map(values => values.map((n,i)=>n/full[i]));
+      mesh.removeFromParent(); geometry.dispose(); material.dispose(); map.dispose();
+      return { samples, fading, movedPixels };
+    }
+    const image = source.toDataURL();
+    const text = await inspect({text:"가가\n가가",textColor:"#ffffff"});
+    const artwork = await inspect({image});
+    renderer.dispose();
+    return {text,artwork};
+  });
+  const [hidden, early, middle, back] = result.text.samples;
+  expect(hidden).toEqual([0,0,0,0]);
+  expect(early[0]).toBeGreaterThan(.25);
+  expect(early[1]).toBeLessThan(early[0] * .3);
+  expect(early.slice(2)).toEqual([0,0]);
+  expect(middle[0]).toBeGreaterThan(.95);
+  expect(middle[1]).toBeGreaterThan(middle[2]+.2);
+  expect(middle[2]).toBeGreaterThan(middle[3]+.1);
+  expect(back[0]).toBeCloseTo(early[0],1);
+  expect(result.text.movedPixels).toBe(0);
+  const spread = Math.max(...result.text.fading) - Math.min(...result.text.fading);
+  expect(spread).toBeGreaterThan(.025);
+  expect(spread).toBeLessThan(.16);
+  for (const sample of [...result.artwork.samples.slice(1), result.artwork.fading]) {
+    expect(Math.max(...sample)-Math.min(...sample)).toBeLessThan(.01);
+    expect(sample[0]).toBeGreaterThan(.05);
+    expect(sample[0]).toBeLessThan(.9);
+  }
+  expect(result.artwork.samples[2][0]).toBeGreaterThan(result.artwork.samples[1][0]);
+});
+
 test("uploaded artwork keeps fine lines, transparency and color under a light filter", async ({page}) => {
   await page.goto(".");
   const result = await page.evaluate(async () => {

@@ -149,7 +149,7 @@ test("image creation and placement work on mobile with one placement control", a
   expect(errors).toEqual([]);
 });
 
-test("the same content keeps its chosen placement while visibility follows each environment and terrain edits", async ({ page }) => {
+test("copies retain their placement and environment through edits and distant copies stay hidden in play", async ({ page }) => {
   const errors = await setup(page);
   await page.getByRole("button", { name: "텍스트 입력", exact: true }).click();
   await page.getByRole("textbox", { name: "텍스트 입력" }).fill("환경에 반응하는 글");
@@ -183,7 +183,6 @@ test("the same content keeps its chosen placement while visibility follows each 
     const model = (globalThis as any).__testScene.children.find((o: any) => o.userData.presentation?.display === "pulse");
     return model?.getObjectByName("symbol-content")?.material.opacity;
   });
-  const initial = await opacity();
-  await expect.poll(async () => Math.abs(await opacity() - initial), { timeout: 12_000 }).toBeGreaterThan(.2);
+  await expect.poll(opacity).toBe(0);
   expect(errors).toEqual([]);
 });
