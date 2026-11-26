@@ -36,6 +36,8 @@ const english: Record<string, string> = {
   사운드: "Sound",
   "배치는 내 차례에 할 수 있어요. 편집은 언제든 할 수 있어요.": "You can place things on your turn. You can edit at any time.",
   "배치할 차례": "Time to place",
+  "남은 타일 수": "Tiles remaining",
+  "새 타일은 한 차례에 3칸까지 놓을 수 있어요.": "You can place up to 3 new tiles per turn.",
   "편집할 시간": "Time to edit",
   "차례 남은 시간": "Time remaining in this turn",
   "배치 잠김": "Placement locked",

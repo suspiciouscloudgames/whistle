@@ -107,9 +107,8 @@ export function makeWaterSurface(
       vec3 reflected=skyTint*mix(vec3(.9,.95,1.0),vec3(.72,.83,.94),clamp(reflectedDirection.y,0.0,1.0));
       if(hasReflection>.5 && reflectionPosition.w>0.0){
         vec2 reflectionUv=reflectionPosition.xy/reflectionPosition.w+slope*.012;
-        float edge=smoothstep(0.0,.035,min(min(reflectionUv.x,reflectionUv.y),min(1.0-reflectionUv.x,1.0-reflectionUv.y)));
-        vec3 mirror=texture2D(reflectionMap,clamp(reflectionUv,vec2(.002),vec2(.998))).rgb;
-        reflected=mix(reflected,mirror,edge*.92);
+        vec3 mirror=texture2D(reflectionMap,reflectionUv).rgb;
+        reflected=mix(reflected,mirror,.92);
       }
       float glint=pow(max(dot(n,normalize(v+sunVector)),0.0),96.0)*lightPower;
       float transmission=exp(-max(depth,0.0)*2.2);
@@ -149,9 +148,11 @@ export function makeWaterSurface(
       #include <colorspace_fragment>
       #include <fog_fragment>
     }`;
-  water.onBeforeRender = (_renderer, scene) => {
+  water.onBeforeRender = (renderer, scene) => {
     if (scene.background instanceof THREE.Color)
       material.uniforms.skyTint.value.copy(scene.background);
+    else if (scene.background === null)
+      renderer.getClearColor(material.uniforms.skyTint.value);
     const sun = scene.getObjectByName("whistle-sun") as
       | THREE.DirectionalLight
       | undefined;

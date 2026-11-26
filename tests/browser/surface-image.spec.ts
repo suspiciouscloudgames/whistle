@@ -77,7 +77,7 @@ async function grassSurfaceState(page: Page) {
     const image = meshes.find((mesh: any) => mesh.name === "grass-surface-image");
     const circle = scene.children.find((child: any) => child.userData.asset === "circle");
     return { textured: image?.count ?? 0, total: meshes.reduce((sum: number, mesh: any) => sum + mesh.count, 0), matrices,
-      texture: image?.material.map?.image?.src,
+      texture: image?.material.map?.image?.toDataURL(),
       sameGeometry: !image || Array.from(image.geometry.attributes.position.array).join(",") === Array.from(base.geometry.attributes.position.array).join(","),
       ground: !!circle?.getObjectByName("surface-image"),
       time: group.userData.grassTime.value, strength: group.userData.grassMotion.value };
@@ -101,8 +101,9 @@ test("surface attachment uses existing grass or bare ground without planting any
   expect(attached.ground).toBe(true);
   await expect.poll(async () => (await grassSurfaceState(page)).time).toBeGreaterThan(attached.time!);
   await expect.poll(async () => (await savedWorld(page)).assets[0].placement).toBe("surface");
-  const saved = (await savedWorld(page)).assets[0];
-  expect(attached.texture).toBe(saved.image);
+  await expect.poll(async () => (await grassSurfaceState(page)).texture).toMatch(/^data:image/);
+  const texture = (await grassSurfaceState(page)).texture;
+  expect(texture).not.toBe((await savedWorld(page)).assets[0].image);
   await page.getByRole("button", { name: "번짐", exact: true }).click();
   await page.locator('[data-cell="39"]').click({ position: { x: 2, y: 2 } });
   await expect.poll(async () => (await grassSurfaceState(page)).ground).toBe(true);
@@ -113,7 +114,7 @@ test("surface attachment uses existing grass or bare ground without planting any
   await page.locator(".play-shell canvas").waitFor();
   await expect.poll(async () => (await grassSurfaceState(page)).textured).toBeGreaterThan(0);
   const playingGrass=await grassSurfaceState(page);
-  expect(playingGrass.texture).toBe(saved.image);
+  await expect.poll(async () => (await grassSurfaceState(page)).texture).toBe(texture);
   expect(playingGrass.sameGeometry).toBe(true);
   const coatingOpacity = () => page.evaluate(() => {
     const mesh = (globalThis as any).__testScene.getObjectByName("grass-surface-image");
@@ -128,7 +129,7 @@ test("surface attachment uses existing grass or bare ground without planting any
   await page.locator(".live-preview canvas").scrollIntoViewIfNeeded();
   await expect(page.locator(".live-preview canvas")).toHaveAttribute("data-ready", "true", { timeout: 30_000 });
   await expect.poll(async () => (await grassSurfaceState(page)).textured).toBe(attached.textured);
-  expect((await grassSurfaceState(page)).texture).toBe(saved.image);
+  await expect.poll(async () => (await grassSurfaceState(page)).texture).toBe(texture);
   expect(errors).toEqual([]);
 });
 
@@ -176,10 +177,10 @@ test("pixel terrain, textured trunks and stones retain their geometry and water 
     const tree = trees.find(tree => tree.userData.cell === 51);
     const water = scene.getObjectByName("generated-water");
     return { treeCount: trees.length, treeVertices: tree.geometry.attributes.position.count,
-      treeTexture: tree.material.map?.image?.src, projection: !!tree.material.userData.surfaceProjection,
+      treeTexture: tree.material.map?.image?.toDataURL(), projection: !!tree.material.userData.surfaceProjection,
       stones: stones.reduce((sum, mesh) => sum + mesh.count, 0), texturedStones: stones.filter(mesh => !!mesh.material.map).reduce((sum, mesh) => sum + mesh.count, 0),
       stoneShapes: [...new Set(stones.filter(mesh => mesh.count).map(mesh => mesh.geometry.userData.stoneShape))].sort(),
-      stoneMaps: stones.filter(mesh => !!mesh.material.map).map(mesh => mesh.material.map.image?.src),
+      stoneMaps: stones.filter(mesh => !!mesh.material.map).map(mesh => mesh.material.map.image?.toDataURL()),
       pixelGround: !!ground.material.userData.pixelInk,
       groundMin: Math.min(...ground.geometry.attributes.color.array),
       reflection: water.material.uniforms.hasReflection.value,
@@ -311,7 +312,7 @@ test("ground artwork keeps its aspect and color while all four edges fade smooth
     await new Promise<void>((resolve,reject)=>{
       const start=performance.now();
       const ready=()=>{
-        if(picture.material.map.image?.naturalWidth){resolve();return;}
+        if(picture.material.map.image?.width){resolve();return;}
         if(performance.now()-start>5000){reject(new Error("artwork did not load"));return;}
         requestAnimationFrame(ready);
       };ready();
@@ -352,7 +353,7 @@ test("ground artwork keeps its aspect and color while all four edges fade smooth
     const clipped=makeSurfaceImage(asset,placed,world,terrain);scene.add(clipped);
     const clippedPicture=clipped.children[0];
     await new Promise<void>(resolve=>{
-      const ready=()=>clippedPicture.material.map.image?.naturalWidth?resolve():requestAnimationFrame(ready);
+      const ready=()=>clippedPicture.material.map.image?.width?resolve():requestAnimationFrame(ready);
       ready();
     });
     pixel.render(scene,camera);context.drawImage(renderer.domElement,0,0);
@@ -382,7 +383,7 @@ test("ground artwork keeps its aspect and color while all four edges fade smooth
   await testInfo.attach("ground-artwork",{body:screenshot,contentType:"image/png"});
 });
 
-test("colored stone artwork retains surface dots and the original material outside its footprint",async({page},testInfo)=>{
+test("colored stone artwork keeps subtle surface dots and the original material outside its footprint",async({page},testInfo)=>{
   const errors:string[]=[];
   page.on("console",message=>{if(message.type()==="error")errors.push(message.text());});
   await page.goto(".");
@@ -408,20 +409,23 @@ test("colored stone artwork retains surface dots and the original material outsi
     const copy=document.createElement("canvas");copy.width=copy.height=512;
     const context=copy.getContext("2d")!;context.drawImage(renderer.domElement,0,0);
     const frame=context.getImageData(0,0,512,512).data;
-    let dots=0,colored=0,count=0;
+    let dots=0,strongDots=0,colored=0,count=0;
     for(let y=215;y<295;y++)for(let x=215;x<295;x++){
       const i=(y*512+x)*4;
-      dots+=Number(Math.abs(frame[i+1]-frame[i+5])>12);
+      const contrast=Math.abs(frame[i+1]-frame[i+5]);
+      dots+=Number(contrast>2);
+      strongDots+=Number(contrast>12);
       colored+=Number(frame[i+1]>frame[i]+25 && frame[i+1]>frame[i+2]+15);count++;
     }
     const outside=Array.from(frame.slice((256*512+420)*4,(256*512+420)*4+3));
     const screenshot=copy.toDataURL();
     rock.geometry.dispose();material.dispose();texture.dispose();pixel.dispose();renderer.dispose();
-    return {dots:dots/count,colored:colored/count,outside,screenshot};
+    return {dots:dots/count,strongDots:strongDots/count,colored:colored/count,outside,screenshot};
   });
   expect(errors).toEqual([]);
   expect(result.colored).toBeGreaterThan(.98);
   expect(result.dots).toBeGreaterThan(.05);
+  expect(result.strongDots).toBeLessThan(.01);
   expect(Math.max(...result.outside)-Math.min(...result.outside)).toBeLessThan(3);
   expect(result.outside[0]).toBeGreaterThan(50);
   expect(result.outside[0]).toBeLessThan(220);

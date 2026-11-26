@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createSymbolSession, syncSymbols, stepSymbols, crossesSymbol, interactionKind, GAZE_SECONDS, WAIT_SECONDS, type SymbolSense} from "../lib/symbol-interactions.ts";
-import {starterWorld, createSimulation, type Shape} from "../lib/world.ts";
+import {starterWorld, createSimulation, type Asset, type Shape} from "../lib/world.ts";
 
 function setup(shape: Shape) {
   const world = starterWorld();
@@ -238,6 +238,44 @@ test("surface fading changes the coating and decal while leaving terrain geometr
   assert.equal(decal.material.opacity, 1);
   assert.equal(grass.material.userData.surfaceProjection.opacity.value, 1);
   decal.geometry.dispose(); decal.material.dispose(); grass.geometry.dispose(); grass.material.dispose();
+});
+
+for (const kind of ["text", "image"] as const) test(`passing a ${kind} coating consumes only that placement for the session`, () => {
+  const world = starterWorld(), camera = new THREE.PerspectiveCamera();
+  const actor = { ...createSimulation(world).actors[0], x: 3, z: 2, scale: 1 };
+  const other = { ...actor, id: "image", asset: "image", x: 1 };
+  const asset = { ...world.assets[0], id: actor.asset, display: "steady" as const, text: kind === "text" ? "한 줄" : undefined, image: "first-image" };
+  const models = new Map([[actor.id, new THREE.Group()], [other.id, new THREE.Group()]]);
+  const assets = new Map<string, Asset>([[actor.id, asset], [other.id, { ...asset, id: "image", text: undefined }]]);
+  const terrain = new THREE.Group();
+  const coating = new THREE.Mesh(new THREE.PlaneGeometry(), new THREE.MeshStandardMaterial({ map: new THREE.Texture() }));
+  const opacity = { value: 1 };
+  coating.material.userData.surfaceProjection = { opacity };
+  coating.userData.placementId = actor.id;
+  terrain.add(coating);
+  const session = makeContentPresentation();
+  const sync = () => session.sync([actor, other], assets, models, terrain, () => 4);
+  models.get(actor.id)!.userData.surface = true;
+  sync();
+  assert.equal(session.passContent(3, 2, 3, 2, 0, 100), 0);
+  assert.equal(session.passContent(0, 2, 1, 2, 0, 100), 0);
+  assert.equal(session.passContent(1, 2, 5, 2, 8, 100), 0);
+  assert.equal(session.passContent(1, 2, 5, 2, 4, 100), 1);
+  session.update(camera, world.size, 150, false, false);
+  assert.equal(session.particles.children.length, 1);
+  assert.equal(session.particles.children[0].position.y, 4.12);
+  assert.ok(opacity.value > 0 && opacity.value < 1);
+  sync();
+  session.update(camera, world.size, 1300, false, false);
+  assert.equal(opacity.value, 0);
+  assert.equal(coating.material.opacity, 1);
+  assert.equal(session.particles.children.length, 0);
+  assert.equal(session.passContent(5, 2, 1, 2, 4, 1400), 0);
+  assets.set(actor.id, { ...asset, ...(kind === "text" ? { text: "새 문구" } : { image: "replacement-image" }) });
+  sync();
+  session.update(camera, world.size, 1500, false, false);
+  assert.equal(opacity.value, 1);
+  coating.material.map!.dispose(); coating.material.dispose(); coating.geometry.dispose();
 });
 
 test("floating content stays higher and drifts gently without movement under reduced motion", () => {

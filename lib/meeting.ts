@@ -5,7 +5,7 @@ import { flatTerrain, floorHeight, deriveStructures, randomSequence, type Struct
 import { isGap } from "./tile.ts";
 import { PLAYER_FOOTPRINT_RADIUS } from "./navigation.ts";
 import { initializeWorkshop, isContentEdit, TURN_HINT } from "./workshop.ts";
-import { advanceMeteors, createMeteorTimeline, type MeteorTimeline } from "./meteors.ts";
+import { startTurnTiles, uncountedTiles, TURN_TILE_HINT, TURN_TILE_LIMIT, type TurnTiles } from "./turn-tiles.ts";
 
 export const LOCAL_SIZE = 12;
 export const MEETING_SIZE = LOCAL_SIZE * 3 + 2;
@@ -16,8 +16,8 @@ export const MEETING_LEMON = "#f3ef91";
 export const MEETING_MATERIAL_MESSAGE = "기호는 이미지·텍스트·소리를 합쳐 6종까지 만들 수 있습니다.";
 export const MEETING_PATH = "/whistle/meeting";
 export const TURN_DURATION = 60_000;
-export type MeetingTurn = { owner: string; partner: string; startedAt: number; endsAt: number; serverNow: number };
-type TurnPair = { members: [string, string]; owner: string; startedAt: number; endsAt: number };
+export type MeetingTurn = { owner: string; partner: string; startedAt: number; endsAt: number; serverNow: number; tiles?: TurnTiles };
+type TurnPair = { members: [string, string]; owner: string; startedAt: number; endsAt: number; tiles: TurnTiles };
 // Every viewer keeps their own map in the centre; only the two adjacent maps are rendered.
 export const MEETING_REGIONS = [
   { x0: 13, x1: 24, z0: 0, z1: 11 },
@@ -28,8 +28,7 @@ export type MeetingPosition = Player & { grounded: boolean };
 export type MeetingSignal = { id: string; from: string; to: string; x: number; z: number; collected: boolean };
 export type ConnectionTile = { id: string; members: [string, string]; x: number; z: number; cells?: {x:number;z:number}[]; opened?: boolean; online?: boolean; retired?: boolean; built?: boolean };
 export type MeetingPeer = { id: string; slot: number; online: boolean; playing: boolean; player?: MeetingPosition };
-export type MeetingPresence = { peers: MeetingPeer[]; canWhistle: boolean; onlineCount?: number; turn?: MeetingTurn;
-  meteors?: { timeline: MeteorTimeline; now: number } };
+export type MeetingPresence = { peers: MeetingPeer[]; canWhistle: boolean; onlineCount?: number; turn?: MeetingTurn; };
 type MeetingReset = { id:number; player:MeetingPosition; reason?:"disconnect"|"floor" };
 export type MeetingView = {
   id: string; slot: number; revision: number; world: World;
@@ -53,13 +52,11 @@ type Member = MeetingPeer & {
   ports: [NeighborSlot | null, NeighborSlot | null];
   materials: Map<string, Asset>; received: Set<string>; shared: Map<string, string>; published: Asset[];
   lastWhistle: number; resumeKey?: string;
-  nightSky?: boolean;
 };
 export type MeetingRoom = {
   members: Map<string, Member>; chain: string[]; signals: MeetingSignal[]; connections: ConnectionTile[];
   links: [viewer:string,target:string][]; revision: number; seed: number; sequence: number;
   turns: TurnPair[];
-  meteors: MeteorTimeline;
 };
 const emptyTile = (): Tile => ({ height: 0, surface: "plain", void: true });
 export function fixMeetingStart(world: World) {
@@ -110,16 +107,7 @@ export function meetingNeighbors(room:MeetingRoom,id:string) {
   const i=room.chain.indexOf(id); return i<0?[]:[room.chain[i-1],room.chain[i+1]].filter((id):id is string=>!!id);
 }
 export function createMeetingRoom(seed=Math.floor(Math.random()*0xffffffff)):MeetingRoom {
-  return {members:new Map(),chain:[],signals:[],connections:[],links:[],revision:0,seed,sequence:0,turns:[],meteors:createMeteorTimeline(seed)};
-}
-function advanceMeetingMeteors(room: MeetingRoom, now: number) {
-  return advanceMeteors(room.meteors, [...room.members.values()].some(m => m.online && m.nightSky), now);
-}
-export function setMeetingNightSky(room: MeetingRoom, id: string, eligible: boolean, now = Date.now()) {
-  const member = room.members.get(id);
-  if (!member) return false;
-  member.nightSky = eligible;
-  return advanceMeetingMeteors(room, now);
+  return {members:new Map(),chain:[],signals:[],connections:[],links:[],revision:0,seed,sequence:0,turns:[]};
 }
 function connectedPair(room: MeetingRoom, pair: TurnPair) {
   const [a,b]=pair.members;
@@ -141,6 +129,7 @@ export function advanceMeetingTurns(room: MeetingRoom, now = Date.now()) {
       if (member) snapshotMaterials(member);
     }
     if (elapsed % 2) pair.owner = pair.members.find(id => id !== pair.owner)!;
+    pair.tiles = startTurnTiles(room.members.get(pair.owner)!.document);
     pair.startedAt = pair.endsAt + (elapsed - 1) * TURN_DURATION;
     pair.endsAt += elapsed * TURN_DURATION;
     changed = true;
@@ -150,7 +139,7 @@ export function advanceMeetingTurns(room: MeetingRoom, now = Date.now()) {
   const waiting = ready.filter(id => !paired.has(id));
   for (let i = 0; i + 1 < waiting.length; i += 2) {
     const a = waiting[i], b = waiting[i + 1];
-    const pair: TurnPair = { members: [a, b], owner: a, startedAt: now, endsAt: now + TURN_DURATION };
+    const pair: TurnPair = { members: [a, b], owner: a, startedAt: now, endsAt: now + TURN_DURATION, tiles: startTurnTiles(room.members.get(a)!.document) };
     turns.push(pair);
     if (connectedPair(room,pair)) for (const id of pair.members) snapshotMaterials(room.members.get(id)!);
     changed = true;
@@ -163,7 +152,7 @@ export function meetingTurn(room: MeetingRoom, id: string, now = Date.now()): Me
   const pair = room.turns.find(p => p.members.includes(id));
   if (!pair || connectedPair(room,pair)) return;
   return { owner: pair.owner, partner: pair.members.find(member => member !== id)!,
-    startedAt: pair.startedAt, endsAt: pair.endsAt, serverNow: now };
+    startedAt: pair.startedAt, endsAt: pair.endsAt, serverNow: now, ...(pair.owner === id ? { tiles: pair.tiles } : {}) };
 }
 function syncConnections(room:MeetingRoom) {
   room.connections=[...room.members.values()].flatMap(m=>m.ports.flatMap((p,i)=>p?.used&&m.document.connectionFootings?.some(f=>f.id===p.key)?
@@ -230,7 +219,6 @@ export function reconcileMeeting(room:MeetingRoom,now=Date.now(),graceMs=MEETING
   }
   changed=syncNeighborSlots(room)||changed;
   changed=advanceMeetingTurns(room,now)||changed;
-  changed=advanceMeetingMeteors(room,now)||changed;
   if(changed){shareMeetingMaterials(room);discoverMeetingConnections(room);}
   return changed;
 }
@@ -244,7 +232,6 @@ export function disconnectMeetingMember(room:MeetingRoom,id:string,now=Date.now(
     }
   }
   m.online=false;m.playing=false;m.leftAt=now;room.revision++;
-  m.nightSky=false;advanceMeetingMeteors(room,now);
   advanceMeetingTurns(room,now);
 }
 export function leaveMeetingMember(room:MeetingRoom,id:string) {
@@ -393,6 +380,11 @@ export function publishMeeting(room:MeetingRoom,id:string,input:unknown,received
   else delete world.connectionFootings;
   if(authoredMaterialCount(world,new Set(member.materials.keys()))>MEETING_MATERIAL_LIMIT)throw Error(MEETING_MATERIAL_MESSAGE);
   if(JSON.stringify(world).length>32*1024*1024)throw Error("공유할 재료의 전체 용량이 너무 큽니다.");
+  if (enforceTurn && member.ready && turn?.tiles) {
+    const added = uncountedTiles(world, turn.tiles);
+    if (turn.tiles.added.length + added.length > TURN_TILE_LIMIT) throw Error(TURN_TILE_HINT);
+    turn.tiles.added.push(...added);
+  }
   let acknowledged=false;
   for(const assetId of new Set([...received,...world.receivedMaterialIds??[],...world.assets.filter(a=>a.received).map(a=>a.id)]))if(!member.received.has(assetId)){
     member.received.add(assetId);acknowledged=true;const asset=member.materials.get(assetId);
@@ -482,8 +474,7 @@ export function meetingPresence(room:MeetingRoom,id:string):MeetingPresence {
     const player=positionFor(room,m.id,id);
     if(related.has(m.id)||m.online&&m.playing&&player)peers.push({id:m.id,slot:0,online:m.online,playing:m.playing,...(player?{player}:{})});
   }
-  return {peers,canWhistle:canWhistleMeeting(room,id),onlineCount:[...room.members.values()].filter(m=>m.online).length,turn:meetingTurn(room,id),
-    meteors:{timeline:{...room.meteors},now:Date.now()}};
+  return {peers,canWhistle:canWhistleMeeting(room,id),onlineCount:[...room.members.values()].filter(m=>m.online).length,turn:meetingTurn(room,id)};
 }
 export function moveMeeting(room:MeetingRoom,id:string,player:MeetingPosition,playing:boolean,resetId?:number) {
   const member=room.members.get(id)!;

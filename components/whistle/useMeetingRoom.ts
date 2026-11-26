@@ -3,7 +3,6 @@ import { localMeetingView, retireOfflineMeetingFootings, type MeetingMessage, ty
 import { createMeetingCodec } from "@/lib/meeting-wire";
 import type { World } from "@/lib/world";
 import { meetingSocketURL, sameMeetingPosition, sameMeetingPresence, resumeMeetingPosition } from "@/lib/meeting-client";
-import type { MeteorClock } from "@/lib/meteors";
 import { MeetingTrail } from "@/lib/meeting-trail";
 
 const createId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2,"0")).join("");
@@ -29,7 +28,7 @@ export function useMeetingRoom(key: string) {
   const [presence, setPresence] = useState<MeetingPresence>({ peers: [], canWhistle: false });
   const [status, setStatus] = useState<"connecting" | "online" | "offline">("connecting");
   const [error, setError] = useState("");
-  const [rejected, setRejected] = useState<{world: World; revision: number} | null>(null);
+  const [rejected, setRejected] = useState<{world: World; revision: number; message: string} | null>(null);
   const [turnClock, setTurnClock] = useState({ server: Date.now(), local: performance.now() });
   const [peerTrail] = useState(() => new MeetingTrail());
   const socket = useRef<WebSocket | null>(null);
@@ -39,8 +38,6 @@ export function useMeetingRoom(key: string) {
   const lastPresence = useRef<MeetingPresence | null>(null);
   const codec = useRef(createMeetingCodec());
   const resetId = useRef(0);
-  const nightSky = useRef(false);
-  const meteorClock = useRef<MeteorClock | undefined>(undefined);
   const listeners = useRef(new Set<(event: MeetingWhistle) => void>());
   useEffect(() => {
     if (!enabled) return;
@@ -65,9 +62,6 @@ export function useMeetingRoom(key: string) {
       lastPresence.current = null;
       connecting = setTimeout(() => ws.close(), 15_000);
       codec.current = createMeetingCodec();
-      ws.onopen = () => {
-        for (const frame of codec.current.encode({type:"night-sky",eligible:nightSky.current})) ws.send(frame);
-      };
       ws.onmessage = event => {
         if (stopped || socket.current !== ws) return;
         let message: MeetingMessage | null;
@@ -76,7 +70,7 @@ export function useMeetingRoom(key: string) {
         if (!message) return;
         if (message.type === "error") {
           setError(message.message);
-          if (message.world) setRejected(previous => ({world:message.world!,revision:(previous?.revision ?? 0)+1}));
+          if (message.world) setRejected(previous => ({world:message.world!,revision:(previous?.revision ?? 0)+1,message:message.message}));
           return;
         }
         if (message.type === "whistle") { listeners.current.forEach(listener => listener(message.whistle)); return; }
@@ -87,9 +81,6 @@ export function useMeetingRoom(key: string) {
         const previous = lastPresence.current;
         lastPresence.current = message.presence;
         if (!previous || !sameMeetingPresence(previous, message.presence)) setPresence(message.presence);
-        if (message.presence.meteors) meteorClock.current = {
-          timeline: message.presence.meteors.timeline, server: message.presence.meteors.now, local: performance.now(),
-        };
         if(message.presence.turn && (!previous || previous.turn?.owner !== message.presence.turn.owner || previous.turn?.endsAt !== message.presence.turn.endsAt))
           setTurnClock({server:message.presence.turn.serverNow,local:performance.now()});
         if (message.type === "state") {
@@ -153,14 +144,9 @@ export function useMeetingRoom(key: string) {
     if (send({ type: "position", player, playing, resetId:resetId.current }))
       lastSent.current = { player: { ...player }, playing, reset: resetId.current };
   }, [send]);
-  const sky = useCallback((eligible: boolean) => {
-    if (nightSky.current === eligible) return;
-    nightSky.current = eligible;
-    send({type:"night-sky",eligible});
-  }, [send]);
   const subscribeWhistle = useCallback((listener: (event: MeetingWhistle) => void) => {
     listeners.current.add(listener);
     return () => { listeners.current.delete(listener); };
   }, []);
-  return { key, documentId, view, presence, status, error, enabled, setMultiplayer, send, restart, position, subscribeWhistle, rejected, turnClock, meteorClock, sky, peerTrail };
+  return { key, documentId, view, presence, status, error, enabled, setMultiplayer, send, restart, position, subscribeWhistle, rejected, turnClock, peerTrail };
 }

@@ -13,6 +13,7 @@ import {
   type Simulation,
 } from "@/lib/world";
 import { emptySymbol, initializeWorkshop, completeSymbol, refillSymbols, TURN_HINT } from "@/lib/workshop";
+import { uncountedTiles, TURN_TILE_HINT, TURN_TILE_LIMIT } from "@/lib/turn-tiles";
 import { TurnBar, useWorkshopTurn } from "@/components/whistle/TurnBar";
 import type { TerrainTool } from "@/lib/tile";
 import { downloadWorld } from "@/lib/sharing";
@@ -32,7 +33,6 @@ import { DebugOverlay } from "@/components/whistle/DebugOverlay";
 import type { MeetingSession } from "@/components/whistle/ConnectedWorld";
 import { MeetingOverlay, meetingVisuals } from "@/components/whistle/MeetingTools";
 import { createMeetingWorld, fixMeetingStart, withLocalMeetingWorld, meetingGlobal, meetingLocal, meetingOwner, meetingReturnPosition, authoredMaterialCount, MEETING_MATERIAL_LIMIT, MEETING_MATERIAL_MESSAGE } from "@/lib/meeting";
-import { createMeteorTimeline } from "@/lib/meteors";
 import { useMeetingWhistle } from "@/components/whistle/useMeetingWhistle";
 import { portalWorld } from "@/lib/portal-protocol";
 import {
@@ -53,6 +53,9 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   const turn = useWorkshopTurn(meeting);
   const initialPlayer = useMemo(() => ({...meetingGlobal(0,initialWorld.start),yaw:0}), []);
   const receivedMaterials = useRef(new Set(meeting.view.received ?? []));
+  const serverTiles = turn.canPlace && meeting.enabled ? meeting.presence.turn?.tiles : undefined;
+  const localTiles = useMemo(() => new Set<number>(), [meeting.view.id, meeting.presence.turn?.partner, turn.endsAt, meeting.rejected]);
+  const turnTiles = serverTiles && { existing: serverTiles.existing, added: [...new Set([...serverTiles.added, ...localTiles])] };
   const browserStorage = useMemo(() => browserWorldStore(meeting.key,meeting.documentId),[meeting.key,meeting.documentId]);
   const [selected, setSelected] = useState<string | null>(null),
     [placingAsset, setPlacingAsset] = useState<string | null>(null),
@@ -62,6 +65,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
       createSimulation(initialWorld),
     ),
     [playing, setPlaying] = useState(false),
+    [debugVisible, setDebugVisible] = useState(false),
     [log, setLog] = useState<Event[]>([]),
     [toast, setToast] = useState(""),
     [showMaker, setShowMaker] = useState(false),
@@ -84,7 +88,6 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     };
   }, [playing]);
   const [movementMode, setMovementMode] = useState<"walk" | "crouch">("walk");
-  const [meteorTimeline] = useState(() => createMeteorTimeline());
   const [spawn, setSpawn] = useState<Player>(initialPlayer);
   const [surface, setSurface] = useState<Surface>("soft"),
     [terrainTool, setTerrainTool] = useState<TerrainTool>("surface");
@@ -127,14 +130,14 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     commit: updateWorld, edit: change, load: loadDocument,
     undo: undoDocument, redo: redoDocument, paint: paintDocument, endStroke, moveSymbol: moveDocumentSymbol, receiveAssets, syncConnectionFootings,
   } = useWorldDocument(initialWorld, resetSimulation);
-  useEffect(() => { if (!turn.canPlace) endStroke(); }, [turn.canPlace, endStroke]);
+  useEffect(() => { endStroke(); }, [turn.canPlace, turn.endsAt, endStroke]);
   useEffect(() => {
     if (!meeting.rejected) return;
     const incoming = structuredClone(meeting.rejected.world);
     const current = getWorld();
     incoming.assets = incoming.assets.map(a => ({...a, originalImage:current.assets.find(b => b.id === a.id && b.image === a.image)?.originalImage}));
     loadDocument(incoming, incoming);
-    notify(TURN_HINT);
+    notify(meeting.rejected.message);
   }, [meeting.rejected, getWorld, loadDocument, notify]);
   const sharedIds = useMemo(() => new Set([
     ...(meeting.view.materials.map(a => a.id) ?? []),...world.assets.filter(a=>a.received).map(a=>a.id),
@@ -187,15 +190,31 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     setSelected(null); setPlacingAsset(null); setShowMaker(false);
     setPlaying(false);
   }, [audio, loadDocument]);
-  const handleImport = useCallback((imported: World) => {
+  const allowTurnTiles = (next: World) => {
+    if (!turnTiles) return true;
+    const added = uncountedTiles(next, turnTiles);
+    if (turnTiles.added.length + added.length > TURN_TILE_LIMIT) {
+      notify(TURN_TILE_HINT);
+      return false;
+    }
+    if (added.length) {
+      for (const i of added) localTiles.add(i);
+      turnTiles.added.push(...added);
+      meeting.send({type:"publish",world:portalWorld(next),received:[...receivedMaterials.current]});
+    }
+    return true;
+  };
+  const handleImport = (imported: World) => {
     if (!turn.canPlace) { notify(TURN_HINT); return; }
     if(imported.size!==12){notify("12×12 맵을 사용합니다.");return;}
     if (authoredMaterialCount(imported, sharedIds) > MEETING_MATERIAL_LIMIT) { notify(MEETING_MATERIAL_MESSAGE); return; }
     imported.connectionFootings=[];
+    const next = initializeWorkshop(fixMeetingStart(imported));
+    if (!allowTurnTiles(next)) return;
     receivedMaterials.current=new Set([...(imported.receivedMaterialIds??[]),...imported.assets.filter(a=>a.received).map(a=>a.id)]);
-    updateWorld(initializeWorkshop(fixMeetingStart(imported)));
+    updateWorld(next);
     setSelected(null); setPlacingAsset(null); setShowMaker(false);
-  }, [updateWorld, notify, sharedIds, turn.canPlace]);
+  };
   const { ready, loading, saveStatus, resumeAutosave, importFile: loadFile } = useWorldPersistence({
     world, onLoad: handleLoad, onImport: handleImport, notify, libraryLimit: MAX_LIBRARY_SIZE,
     storage:browserStorage,fallbackWorld:initialWorld,
@@ -228,14 +247,15 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   };
   const undo = () => {
     if (!canPlaceNow()) { blocked(); return; }
-    if (undoDocument()) setSelected(null);
+    if (undoDocument(allowTurnTiles)) setSelected(null);
   };
   const redo = () => {
     if (!canPlaceNow()) { blocked(); return; }
-    if (redoDocument()) setSelected(null);
+    if (redoDocument(allowTurnTiles)) setSelected(null);
   };
   const enter = () => {
     setPlayState(null);
+    setDebugVisible(new URLSearchParams(location.search).has("debug"));
     meeting.send({type:"publish",world:portalWorld(getWorld()),received:[...receivedMaterials.current]});
     const p=player.current;
     const next=floorHeight(activeWorld,p.x,p.z,deriveWorld(activeWorld).structures)!==null?{...p,falling:false}:{...activeWorld.start,yaw:0};
@@ -249,11 +269,15 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   };
   useEffect(() => {
     if (!playing) return;
-    const escape = (e: KeyboardEvent) => {
+    const playShortcut = (e: KeyboardEvent) => {
       if (e.key === "Escape") exit();
+      if (e.code !== "Backquote" || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target instanceof HTMLElement && (e.target.isContentEditable || e.target.closest("input, textarea, select"))) return;
+      e.preventDefault();
+      setDebugVisible(visible => !visible);
     };
-    window.addEventListener("keydown", escape);
-    return () => window.removeEventListener("keydown", escape);
+    window.addEventListener("keydown", playShortcut);
+    return () => window.removeEventListener("keydown", playShortcut);
   }, [playing]);
   useEffect(
     () => () => {
@@ -270,7 +294,8 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
       const added = cells.filter(i => !before.objects.some(o => o.asset === activeAsset && o.x === i % before.size && o.z === Math.floor(i / before.size))).length;
       if (count + added > MAX_CONTENT_COUNT) notify(contentLimitMessage[kind]);
     }
-    paintDocument(cells, erase, { layer: activeAsset ? "symbols" : "tiles", assetId: activeAsset ?? undefined, surface, terrainTool });
+    const limited = paintDocument(cells, erase, { layer: activeAsset ? "symbols" : "tiles", assetId: activeAsset ?? undefined, surface, terrainTool, turnTiles }, allowTurnTiles);
+    if (limited) notify(TURN_TILE_HINT);
     const after = getWorld();
     if (before !== after) {
       const sound = editSound(before, after, cells, deriveWorld(after));
@@ -365,11 +390,9 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             simulation={activeSimulation}
             derivation={activeDerivation}
             mode="play"
+            debugVisible={debugVisible}
             onPlayer={(p) => {player.current = p;meeting.position({...p,grounded:!!p.grounded},true);}}
             onAudioFrame={frame => audio.movement(frame, activeWorld, activeSimulation.actors, activeDerivation)}
-            meteorTimeline={meteorTimeline}
-            meteorClock={meeting.status === "online" ? meeting.meteorClock : undefined}
-            onNightSky={meeting.sky}
             controls={controls}
             stick={stick}
             onControlsReset={() => setMovementMode("walk")}
@@ -384,7 +407,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /></svg>
           </button>
           <div className="crosshair" />
-          <DebugOverlay audio={audio} getWorld={() => activeWorld} derivation={activeDerivation} />
+          <DebugOverlay visible={debugVisible} audio={audio} getWorld={() => activeWorld} derivation={activeDerivation} />
           <PlayControls
             key={`controls-${playKey}`}
             controls={controls}
@@ -430,7 +453,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             onRedo={redo}
             canPlace={turn.canPlace}
             onBlocked={blocked}
-            turnBar={<TurnBar {...turn} />}
+            turnBar={<TurnBar {...turn} tilesLeft={turnTiles ? TURN_TILE_LIMIT - turnTiles.added.length : undefined} />}
             onMoveSymbol={(id, index) => {
               if (!canPlaceNow()) { blocked(); return; }
               endStroke(); moveDocumentSymbol(id, index);

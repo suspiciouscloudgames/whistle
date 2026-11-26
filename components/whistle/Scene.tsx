@@ -1,5 +1,6 @@
 "use client";
 import { contentImage } from "../../lib/text-image.ts";
+import { loadContentTexture } from "./ContentTexture";
 import { environmentPresentation } from "../../lib/environment-presentation";
 import { makeContentPresentation } from "./ContentPresentation";
 import { useLanguage } from "./Language";
@@ -24,7 +25,7 @@ import { environmentAt } from "@/lib/environment";
 import { environmentalFlight, stepEnvironmentalFlight, type EnvironmentalFlight } from "@/lib/environment-motion";
 import { makeWeather } from "./WeatherScene";
 import { makeMeteors } from "./MeteorScene";
-import { advanceMeteors, createMeteorTimeline, meteorElapsed, meteorSeed, METEOR_DURATION, type MeteorTimeline, type MeteorClock } from "@/lib/meteors";
+import { createMeteorShower, type MeteorShower } from "@/lib/meteors";
 import { WEATHER } from "@/lib/weather";
 import { createPortalScene } from "./PortalScene";
 import { createMeetingScene, type MeetingVisuals } from "./MeetingScene";
@@ -57,6 +58,7 @@ type Props = {
   simulation: Simulation;
   derivation: WorldDerivation;
   mode: "overview" | "play";
+  debugVisible?: boolean;
   onPlayer?: (p: Player) => void;
   onAudioFrame?: (frame: PlayerAudioFrame) => void;
   onControlsReset?: () => void;
@@ -72,9 +74,6 @@ type Props = {
   suspended?: boolean;
   onReady?: (success: boolean) => void;
   meeting?: MeetingVisuals;
-  meteorTimeline?: MeteorTimeline;
-  meteorClock?: MutableRefObject<MeteorClock | undefined>;
-  onNightSky?: (eligible: boolean) => void;
 };
 const NO_PORTALS: WorldPortal[] = [];
 const deviceTime = () => new Date();
@@ -104,9 +103,7 @@ function makeObject(asset: Asset): THREE.Group {
   const g = new THREE.Group();
 
   if (!asset.image) return g;
-  const texture = new THREE.TextureLoader().load(contentImage(asset)!);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = asset.text ? 16 : 1;
+  const texture = loadContentTexture(asset);
   const picture = mesh(
     new THREE.PlaneGeometry(1.5, 1.5),
     new THREE.MeshBasicMaterial({
@@ -146,6 +143,7 @@ export default function Scene({
   simulation,
   derivation,
   mode,
+  debugVisible = false,
   onPlayer,
   onAudioFrame,
   onControlsReset,
@@ -161,16 +159,9 @@ export default function Scene({
   suspended = false,
   onReady,
   meeting,
-  meteorTimeline,
-  meteorClock,
-  onNightSky,
 }: Props) {
-  const fallbackMeteors = useRef(createMeteorTimeline());
-  const meteorsRef = useRef({timeline:meteorTimeline ?? fallbackMeteors.current, clock:meteorClock, onNightSky});
-  meteorsRef.current = {timeline:meteorTimeline ?? fallbackMeteors.current, clock:meteorClock, onNightSky};
-  const [meteorDebug, setMeteorDebug] = useState(() => new URLSearchParams(location.search).has("debug"));
-  const debugRef = useRef(meteorDebug);
-  debugRef.current = meteorDebug;
+  const debugRef = useRef(debugVisible);
+  debugRef.current = debugVisible;
   const previewMeteor = useRef<() => void>(() => {});
   const meetingRef = useRef(meeting);
   meetingRef.current = meeting;
@@ -223,16 +214,12 @@ export default function Scene({
     const weatherScene = makeWeather(world.size);
     scene.add(weatherScene.group);
     const meteorScene = makeMeteors();
-    scene.add(meteorScene.mesh);
-    let previewStarted: number | null = null;
-    let skyEligible: boolean | undefined;
-    const reportSky = (eligible: boolean) => {
-      if (skyEligible === eligible) return;
-      skyEligible = eligible;
-      meteorsRef.current.onNightSky?.(eligible);
-    };
+    scene.add(meteorScene.group);
+    const showers: MeteorShower[] = [];
+    let preview: MeteorShower | undefined;
+    let previousWeather = worldRef.current.weather ?? "clear";
     previewMeteor.current = () => {
-      previewStarted = previewStarted === null ? performance.now() : null;
+      preview = preview ? undefined : createMeteorShower(performance.now(), player.yaw, pitch);
     };
     const weatherSky = new THREE.Color();
     let lastTimeOfDay = worldRef.current.timeOfDay ?? "auto";
@@ -369,6 +356,7 @@ export default function Scene({
     scene.add(meetingScene.group);
     const symbolExperience = makeSymbolExperience();
     const contentPresentation = makeContentPresentation();
+    scene.add(contentPresentation.particles);
     let pointerStart: {id: number; x: number; y: number; time: number; moved: boolean} | null = null;
     let falling: { originY: number; elapsed: number } | null = null;
     let jump: ReturnType<typeof launchJump> | null = null;
@@ -434,10 +422,12 @@ export default function Scene({
         softenEdges(terrain.group, world.size);
         scene.add(terrain.group);
       }
-      const treeImages = terrain.setSurfaceImages(actors.current, worldRef.current.assets);
+      const renderAssets = worldRef.current.assets.map(asset => !asset.image && asset.text?.trim()
+        ? { ...asset, image: contentImage(asset) } : asset);
+      const treeImages = terrain.setSurfaceImages(actors.current, renderAssets);
       const presentationAssets = new Map<string, typeof world.assets[number]>();
       for (const a of actors.current) {
-        const source = worldRef.current.assets.find((s) => s.id === a.asset);
+        const source = renderAssets.find((s) => s.id === a.asset);
         if (!source || (!source.image && !source.text?.trim())) continue;
         const asset = { ...source, ...environmentPresentation(worldRef.current, a, terrain.environment) };
         presentationAssets.set(a.id, asset);
@@ -495,15 +485,15 @@ export default function Scene({
           spark.rotation.y = performance.now() * 0.001;
         }
       }
-      const ids = new Set(actors.current.filter(a => { const asset = worldRef.current.assets.find(asset => asset.id === a.asset); return asset?.image || asset?.text?.trim(); }).map(a => a.id));
       for (const [id, m] of models.current) {
-        if (!ids.has(id)) {
+        if (!presentationAssets.has(id)) {
           scene.remove(m);
           disposeGroup(m);
           models.current.delete(id);
         }
       }
-      contentPresentation.sync(actors.current, presentationAssets, models.current, terrain.group);
+      contentPresentation.sync(actors.current, presentationAssets, models.current, terrain.group,
+        actor => floorHeight(worldRef.current, actor.x, actor.z, structures) ?? actor.site?.height ?? 0);
     };
     const resize = () => {
       const w = el.clientWidth,
@@ -541,7 +531,6 @@ export default function Scene({
     const keydown = (e: KeyboardEvent) => {
       if (
         mode !== "play" ||
-        falling !== null ||
         e.metaKey ||
         e.ctrlKey ||
         e.altKey ||
@@ -550,12 +539,10 @@ export default function Scene({
             e.target.closest("input, textarea, select")))
       )
         return;
-      if (e.code === "Backquote" && !e.repeat) {
-        e.preventDefault();setMeteorDebug(value => !value);return;
-      }
-      if (debugRef.current && e.code === "Digit1" && !e.repeat) {
+      if (debugRef.current && (e.code === "Digit1" || e.code === "Numpad1") && !e.repeat) {
         e.preventDefault();previewMeteor.current();return;
       }
+      if (falling !== null) return;
       if (e.code === "Space" || e.key === " ") {
         e.preventDefault();
         keys.add("jump-held");
@@ -671,20 +658,11 @@ export default function Scene({
         currentDay[key] += (targetDay[key] - currentDay[key]) * blend;
       const weather = worldRef.current.weather ?? "clear";
       graphicsDaylight.value = currentDay.daylight;
-      const eligible = mode === "play" && weather === "clear" && currentDay.daylight <= .05;
-      reportSky(eligible);
-      const shared = meteorsRef.current.clock?.current;
-      const meteorNow = shared ? shared.server + time - shared.local : Date.now();
-      const timeline = meteorsRef.current.timeline;
-      if (shared) Object.assign(timeline, shared.timeline);
-      else advanceMeteors(timeline, eligible, meteorNow);
-      let showerElapsed = eligible ? meteorElapsed(timeline, meteorNow) : null;
-      let showerSeed = meteorSeed(timeline);
-      if (previewStarted !== null) {
-        const elapsed = time - previewStarted;
-        if (!eligible || elapsed >= METEOR_DURATION) previewStarted = null;
-        else { showerElapsed = elapsed / 1000; showerSeed = 7319; }
+      for (let i = showers.length - 1; i >= 0; i--) {
+        if (time >= showers[i].endsAt) showers.splice(i, 1);
       }
+      if (preview && (!debugRef.current || time >= preview.endsAt || (previousWeather === "clear" && weather !== "clear"))) preview = undefined;
+      previousWeather = weather;
       const climate = WEATHER[weather];
       weatherSky.set(climate.sky);
       const skyLight = weatherSky.r * .2126 + weatherSky.g * .7152 + weatherSky.b * .0722;
@@ -904,6 +882,7 @@ export default function Scene({
             }
             const dx = air ? air.vx * dt : jump ? jump.vx * dt : Math.sin(player.yaw) * distance,
               dz = air ? air.vz * dt : jump ? jump.vz * dt : -Math.cos(player.yaw) * distance;
+            const fromX = player.x, fromZ = player.z;
             if (!blocked(player.x + dx, player.z)) player.x += dx;
             if (!blocked(player.x, player.z + dz)) player.z += dz;
             const floor = floorHeight(
@@ -947,6 +926,10 @@ export default function Scene({
                 player.z = safe.z;
               }
             } else {
+              if (respawnFade === 0) {
+                const passed = contentPresentation.passContent(fromX, fromZ, player.x, player.z, feet, time);
+                for (let i = 0; i < passed; i++) showers.push(createMeteorShower(time, player.yaw, pitch));
+              }
               const local = environmentAt(
                 terrain.environment,
                 player.x,
@@ -971,7 +954,7 @@ export default function Scene({
                 ? terrainSample(worldRef.current, player.x, player.z).weights.rough : 0,
               water: dry ? 0 : 1, grounded: onGround, falling: falling !== null, yaw: player.yaw,
               crouch: !!controls?.current.has("crouch"), run: !!controls?.current.has("run"),
-              meteors: showerElapsed !== null,
+              meteors: showers.length > 0 || !!preview,
             });
             audioReport = time;
           }
@@ -1012,7 +995,8 @@ export default function Scene({
       peerTrail?.update(meetingRef.current?.peerTrail, worldRef.current, derivationRef.current, time);
       contentPresentation.update(camera, worldRef.current.size, time, mode === "overview", reducedMotion);
       weatherScene.update(time, worldRef.current.weather ?? "clear", camera, currentDay.daylight, mode === "overview");
-      meteorScene.update(showerElapsed, showerSeed, camera, reducedMotion);
+      const visibleShowers = preview && weather === "clear" ? [...showers, preview] : showers;
+      meteorScene.update(visibleShowers, time, camera, reducedMotion, currentDay.daylight);
       for(let i=fadingMist.length-1;i>=0;i--) {
         const fog=fadingMist[i],fade=Math.min(1,(time-fog.started)/650);
         fog.mesh.material.opacity=fog.opacity*(1-fade);
@@ -1041,9 +1025,8 @@ export default function Scene({
         cancelAnimationFrame(frame);
         frame = 0;
         clear();
-        reportSky(false);
-        previewStarted = null;
-        advanceMeteors(meteorsRef.current.timeline, false, Date.now());
+        showers.length = 0;
+        preview = undefined;
       } else if (!frame) {
         last = performance.now();
         resolution?.reset();
@@ -1065,8 +1048,6 @@ export default function Scene({
     renderer.domElement.addEventListener("webglcontextlost", contextLost);
     return () => {
       disposed = true;
-      reportSky(false);
-      advanceMeteors(meteorsRef.current.timeline, false, Date.now());
       cancelAnimationFrame(frame);
       visibility.disconnect();
       document.removeEventListener("visibilitychange", updateVisibility);
@@ -1098,7 +1079,7 @@ export default function Scene({
       )}
     >
       <div ref={fallVeil} className="fall-veil" aria-hidden="true" />
-      {mode === "play" && meteorDebug && <div className="meteor-debug">
+      {mode === "play" && debugVisible && <div className="meteor-debug">
         <button type="button" onClick={() => previewMeteor.current()}>
           {t("유성우 테스트 (1)")}
         </button>

@@ -1,12 +1,14 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type TestInfo } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 import { createMeetingWorld } from "../../lib/meeting";
+import { flatTerrain } from "../../lib/terrain";
 import { probePd, pdMessages } from "./pd-probe";
 import type { Weather, TimeOfDay } from "../../lib/world";
 
 test.setTimeout(90_000);
 test.use({ viewport: { width: 800, height: 600 } });
 
-async function open(page: Page, timeOfDay: TimeOfDay = "midnight", weather: Weather = "clear", room = `meteors-${Date.now()}`) {
+async function open(page: Page, timeOfDay: TimeOfDay = "midnight", weather: Weather = "clear", room = `meteors-${Date.now()}`, debug = true, world = createMeetingWorld(17)) {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => {
@@ -15,42 +17,141 @@ async function open(page: Page, timeOfDay: TimeOfDay = "midnight", weather: Weat
   await probePd(page);
   await page.route(/\/components\/whistle\/Scene\.tsx(\?|$)/, async route => {
     const response = await route.fetch();
-    const body = (await response.text()).replace("scene.add(meteorScene.mesh);", "scene.add(meteorScene.mesh); globalThis.__meteorMesh = meteorScene.mesh;")
+    const body = (await response.text()).replace("scene.add(meteorScene.group);", "scene.add(meteorScene.group); globalThis.__meteorGroup = meteorScene.group;")
       .replace("const portalScene = createPortalScene(world.size);", "globalThis.__meteorWorld = worldRef; const portalScene = createPortalScene(world.size);")
-      .replace("meteorScene.update(showerElapsed, showerSeed, camera, reducedMotion);", `
-        meteorScene.update(showerElapsed, showerSeed, camera, reducedMotion);
-        if (mode === "play") globalThis.__meteorFrame = { elapsed: showerElapsed, seed: showerSeed, eligible, startsAt: timeline.startsAt };
-      `);
+      .replace("pixelRenderer.render(scene, camera);", `$&
+        globalThis.__meteorPlayScene = scene;
+        if (mode === "play") {
+          const active = visibleShowers[0];
+          const showerElapsed = active ? (time - active.startedAt) / 1000 : null;
+          globalThis.__meteorFrame = { elapsed: showerElapsed, count: active?.streaks.length ?? 0 };
+          if (active) globalThis.__sawShower = true;
+          globalThis.__capturePass?.(renderer.domElement, showerElapsed);
+          if (showerElapsed >= .9 && showerElapsed <= 1.5) globalThis.__captureMeteor?.(renderer.domElement);
+        }`);
     await route.fulfill({ response, body });
   });
-  const world = createMeetingWorld(17);
   world.timeOfDay = timeOfDay; world.weather = weather;
   await page.addInitScript(world => {
     Object.defineProperty(window, "devicePixelRatio", { value: .75 });
     localStorage.setItem("whistle.language", "ko");
     localStorage.setItem("whistle.world.v2", JSON.stringify(world));
   }, world);
-  await page.goto(`?meeting=${room}&debug`);
+  await page.goto(`?meeting=${room}${debug ? "&debug" : ""}`);
   await expect(page.locator(".live-preview canvas")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "플레이", exact: true }).click();
   await expect(page.locator(".play-shell canvas")).toHaveAttribute("data-ready", "true");
   await expect.poll(async () => (await pdMessages(page, "whistle-player position")).length, { timeout: 30_000 }).toBeGreaterThan(0);
   return errors;
 }
-const frame = (page: Page) => page.evaluate(() => (globalThis as any).__meteorFrame as {elapsed: number | null; seed: number; eligible: boolean; startsAt: number | null});
+const frame = (page: Page) => page.evaluate(() => (globalThis as any).__meteorFrame as {elapsed: number | null; count: number});
 const meteorMessages = (page: Page) => pdMessages(page, "whistle-event fallingstar");
+
+for (const kind of ["text", "image"] as const) test(`walking past authored ${kind} scatters just that placement and starts a shower in ordinary play`, async ({ page }, info) => {
+  const world = createMeetingWorld(17);
+  world.terrain = flatTerrain(world.size);
+  const title = world.assets.find(a => a.prompt?.title)!;
+  title.placement = "upright";
+  if (kind === "text") Object.assign(title, { text: "여기, 지금", textColor: "#209047" });
+  else {
+    delete title.text;
+    title.image = await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 128;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "#209047";
+      ctx.fillRect(20, 20, 88, 88);
+      return canvas.toDataURL();
+    });
+  }
+  const first = world.objects.find(o => o.asset === title.id)!;
+  Object.assign(first, { id: "pass-first", x: world.start.x, z: world.start.z - 2 });
+  world.objects.push({ ...first, id: "pass-copy", x: world.start.x + 3 });
+  const errors = await open(page, "noon", kind === "image" ? "rain" : "clear", undefined, false, world);
+  const opacity = (id: string) => page.evaluate(id => {
+    const model = (globalThis as any).__meteorPlayScene?.children.find((o: any) => o.userData.placementId?.endsWith(id));
+    return model?.getObjectByName("symbol-content")?.material.opacity as number | undefined;
+  }, id);
+  await expect.poll(() => opacity("pass-first")).toBe(1);
+  expect((await frame(page)).elapsed).toBeNull();
+  await page.evaluate(() => {
+    (globalThis as any).__capturePass = (source: HTMLCanvasElement, elapsed: number | null) => {
+      if (elapsed === null || elapsed < .20 || elapsed > .72) return;
+      const scene = (globalThis as any).__meteorPlayScene;
+      if (!scene.getObjectByName("passage-particles")) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = source.width; canvas.height = source.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(source, 0, 0);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let ink = 0, meteors = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i+1] > pixels[i] + 15 && pixels[i+1] > pixels[i+2] + 15) ink++;
+        if (i < pixels.length / 2 && pixels[i] > pixels[i+1] + 18 && pixels[i] > pixels[i+2] + 18) meteors++;
+      }
+      if (ink > 10 && meteors > 10) {
+        (globalThis as any).__passImage = canvas.toDataURL();
+        delete (globalThis as any).__capturePass;
+      }
+    };
+  });
+  await page.keyboard.down("w");
+  try {
+    await expect.poll(async () => (await frame(page)).count).toBeGreaterThan(0);
+    expect((await frame(page)).count).toBeLessThanOrEqual(3);
+  } finally { await page.keyboard.up("w"); }
+  await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
+  await expect.poll(() => opacity("pass-first")).toBe(0);
+  expect(await opacity("pass-copy")).toBe(1);
+  await expect.poll(() => page.evaluate(() => !!(globalThis as any).__passImage)).toBe(true);
+  const png = await page.evaluate(() => (globalThis as any).__passImage as string);
+  await writeFile(info.outputPath(kind + "-passage.png"), Buffer.from(png!.split(",")[1], "base64"));
+  await expect.poll(() => page.evaluate(() => !!(globalThis as any).__meteorPlayScene.getObjectByName("passage-particles"))).toBe(false);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "플레이", exact: true }).click();
+  await expect(page.locator(".play-shell canvas")).toHaveAttribute("data-ready", "true");
+  await expect.poll(() => opacity("pass-first")).toBe(1);
+  expect((await frame(page)).elapsed).toBeNull();
+  expect(errors).toEqual([]);
+});
+
+async function lookAtShower(page: Page) {
+  await page.mouse.move(680, 470); await page.mouse.down();
+  await page.mouse.move(455, 40, { steps: 14 }); await page.mouse.up();
+  await expect.poll(async () => Number(await page.locator(".play-shell canvas").getAttribute("data-player-yaw"))).toBeLessThan(-.4);
+  await page.evaluate(() => {
+    (globalThis as any).__captureMeteor = (source: HTMLCanvasElement) => {
+      const copy = document.createElement("canvas");
+      copy.width = source.width; copy.height = source.height;
+      const ctx = copy.getContext("2d")!;
+      ctx.drawImage(source, 0, 0);
+      const pixels = ctx.getImageData(0, 0, copy.width, Math.floor(copy.height / 2)).data;
+      let red = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] > pixels[i + 1] + 18 && pixels[i] > pixels[i + 2] + 18) red++;
+      }
+      (globalThis as any).__meteorImage = { red, png: copy.toDataURL() };
+      delete (globalThis as any).__captureMeteor;
+    };
+  });
+}
+
+async function checkRedTrail(page: Page, info: TestInfo, name: string) {
+  await expect.poll(() => page.evaluate(() => (globalThis as any).__meteorImage?.red ?? 0)).toBeGreaterThan(20);
+  const png = await page.evaluate(() => (globalThis as any).__meteorImage.png as string);
+  await writeFile(info.outputPath(name + ".png"), Buffer.from(png.split(",")[1], "base64"));
+}
 
 test("night meteor graphics and Daban sound start together, end together, and stop in rain", async ({ page }, info) => {
   const errors = await open(page);
   expect((await frame(page)).elapsed).toBeNull();
-  await page.mouse.move(600, 450); await page.mouse.down();
-  await page.mouse.move(600, 100, { steps: 12 }); await page.mouse.up();
+  await lookAtShower(page);
   await page.keyboard.press("Digit1");
   await expect.poll(async () => (await frame(page)).elapsed).not.toBeNull();
   await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
-  await expect.poll(() => page.evaluate(() => (globalThis as any).__meteorMesh.geometry.drawRange.count)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => (globalThis as any).__meteorGroup.children[0]?.geometry.drawRange.count ?? 0)).toBeGreaterThan(0);
   await expect.poll(async () => (await frame(page)).elapsed).toBeGreaterThan(.75);
-  await page.screenshot({ path: info.outputPath("meteor-night.png") });
+  await checkRedTrail(page, info, "meteor-night");
   await expect.poll(async () => (await frame(page)).elapsed, { timeout: 16_000 }).toBeNull();
   await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([0]);
   expect((await meteorMessages(page)).filter(message => message[0] === 1)).toHaveLength(1);
@@ -60,44 +161,43 @@ test("night meteor graphics and Daban sound start together, end together, and st
   await expect.poll(async () => (await frame(page)).elapsed).toBeNull();
   await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([0]);
   await page.keyboard.press("Digit1");
-  await page.waitForTimeout(400);
+  await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
   expect((await frame(page)).elapsed).toBeNull();
+  await page.getByRole("button", {name: "유성우 테스트 (1)"}).click();
+  await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([0]);
   expect(errors).toEqual([]);
 });
 
-test("daytime blocks the preview, and exiting a night preview turns its sound off", async ({ page }) => {
-  const errors = await open(page, "noon");
+test("the debug shortcut shows the daylight shower with audio and stops on exit", async ({ page }, info) => {
+  const errors = await open(page, "noon", "clear", undefined, false);
+  const overlay = page.locator(".play-shell pre");
   await page.keyboard.press("Digit1");
-  await page.waitForTimeout(500);
-  expect((await frame(page)).elapsed).toBeNull();
+  await page.keyboard.press("Backquote");
+  await expect(overlay).toContainText("fallingstar 0");
   expect((await meteorMessages(page)).some(message => message[0] === 1)).toBe(false);
-  await page.evaluate(() => { (globalThis as any).__meteorWorld.current.timeOfDay = "midnight"; });
-  await expect.poll(async () => (await frame(page)).eligible, { timeout: 10_000 }).toBe(true);
+  await lookAtShower(page);
   await page.keyboard.press("Digit1");
+  await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
+  await expect(overlay).toContainText("fallingstar 1");
+  expect((await frame(page)).elapsed).not.toBeNull();
+  await checkRedTrail(page, info, "meteor-day");
+  await page.keyboard.press("Digit1");
+  await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([0]);
+  await page.keyboard.press("Numpad1");
   await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
   await page.keyboard.press("Escape");
   await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([0]);
   expect(errors).toEqual([]);
 });
 
-test("two browsers receive the same scheduled shower and one leaving does not reset it", async ({ browser, baseURL }) => {
-  const ca = await browser.newContext({baseURL, viewport:{width:640,height:480}});
-  const cb = await browser.newContext({baseURL, viewport:{width:390,height:844}});
-  try {
-    const a = await ca.newPage(), b = await cb.newPage(), room = `meteor-shared-${Date.now()}`;
-    const errorsA = await open(a, "midnight", "clear", room);
-    await expect.poll(async () => (await frame(a)).startsAt).not.toBeNull();
-    const scheduled = (await frame(a)).startsAt!;
-    const remaining = scheduled - Date.now();
-    expect(remaining).toBeGreaterThan(50_000); expect(remaining).toBeLessThanOrEqual(180_000);
-    const errorsB = await open(b, "midnight", "clear", room);
-    await expect.poll(async () => (await frame(b)).startsAt).toBe(scheduled);
-    expect((await frame(a)).seed).toBe((await frame(b)).seed);
-    await a.close();
-    await expect(b.locator(".presence-number")).toHaveText("1");
-    expect((await frame(b)).startsAt).toBe(scheduled);
-    expect([...errorsA, ...errorsB]).toEqual([]);
-  } finally { await ca.close(); await cb.close(); }
+test("waiting in an online world never starts an ambient shower", async ({ page }) => {
+  const errors = await open(page, "midnight", "clear", undefined, false);
+  await page.clock.install();
+  for (let i = 0; i < 40; i++) await page.clock.fastForward(5000);
+  expect((await frame(page)).count).toBe(0);
+  expect(await page.evaluate(() => !!(globalThis as any).__sawShower)).toBe(false);
+  expect((await meteorMessages(page)).some(message => message[0] === 1)).toBe(false);
+  expect(errors).toEqual([]);
 });
 
 test("the imported meteor patch produces audio and becomes silent after switching off", async ({ page }) => {

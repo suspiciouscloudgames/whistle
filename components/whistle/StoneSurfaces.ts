@@ -1,4 +1,4 @@
-import { contentImage } from "../../lib/text-image.ts";
+import { loadContentTexture } from "./ContentTexture.ts";
 import * as THREE from "three";
 import { tileAt } from "../../lib/terrain.ts";
 import type { Actor, Asset, World } from "../../lib/world.ts";
@@ -63,11 +63,9 @@ function makeStoneSurfaceBatch(world: World, stones: THREE.InstancedMesh) {
       if (!indices.length) return;
       const { actor, asset } = targets[index];
       applied.add(actor.id);
-      const texture = new THREE.TextureLoader().load(contentImage(asset)!,loaded=>{
-        material.userData.surfaceProjection.aspect.value=loaded.image.naturalWidth/Math.max(1,loaded.image.naturalHeight);
+      const texture = loadContentTexture(asset, aspect => {
+        material.userData.surfaceProjection.aspect.value = aspect;
       });
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy=asset.text?16:8;
       const base = stones.material as THREE.MeshStandardMaterial;
       const material = base.clone();
       material.onBeforeCompile = base.onBeforeCompile;

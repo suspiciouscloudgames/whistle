@@ -22,7 +22,7 @@ export function useWorkshopTurn(meeting: MeetingSession) {
   return { canPlace, endsAt: turn?.endsAt, clock: meeting.turnClock };
 }
 
-export function TurnBar({ canPlace, endsAt, clock }: ReturnType<typeof useWorkshopTurn>) {
+export function TurnBar({ canPlace, endsAt, clock, tilesLeft }: ReturnType<typeof useWorkshopTurn> & { tilesLeft?: number }) {
   const { t } = useLanguage();
   const [, tick] = useState(0);
   useEffect(() => {
@@ -38,6 +38,6 @@ export function TurnBar({ canPlace, endsAt, clock }: ReturnType<typeof useWorksh
       aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
       <div className="turn-fill" style={{ transform: `scaleX(${progress})` }} />
     </div>
-    <span className="turn-label" role="status">{t(label)}</span>
+    <span className="turn-label" role="status">{t(label)}{canPlace && tilesLeft !== undefined && ` / ${t("남은 타일 수")}: ${tilesLeft}`}</span>
   </div>;
 }

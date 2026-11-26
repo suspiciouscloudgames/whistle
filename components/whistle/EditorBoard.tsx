@@ -51,6 +51,7 @@ export function EditorBoard({
 }: Props) {
   const { t } = useLanguage();
   const { structures, environment } = derivation;
+  const startCell = world.start.z * world.size + world.start.x;
   const regions = useMemo(() => effectRegions(environment), [environment]);
   const effectFeedback = useEffectFeedback(regions, world.size, feedback?.id ?? null);
   const effectCells = new Set(effectFeedback.markers.map(region => region.anchor));
@@ -127,7 +128,7 @@ export function EditorBoard({
             );
             const water = environment.cells[i].water;
             const height = water === null ? tile.height : Math.round((water + WATER_INSET) / LEVEL);
-            return `${String.fromCharCode(65 + x)}${z + 1} ${isVoid(tile) ? t("허공") : isHole(tile) ? t("꺼짐") : `${t("높이")} ${height} ${t(SURFACES.find((s) => s.id === tile.surface)!.name)}`} ${objects.map(object => world.assets.find(a => a.id === object.asset)?.name).filter(Boolean).join(" · ")}${x === world.start.x && z === world.start.z ? " " + t("시작점") : ""} ${environmentLabels(i)}`;
+            return `${String.fromCharCode(65 + x)}${z + 1} ${isVoid(tile) ? t("허공") : isHole(tile) ? t("꺼짐") : `${t("높이")} ${height} ${t(SURFACES.find((s) => s.id === tile.surface)!.name)}`} ${objects.map(object => world.assets.find(a => a.id === object.asset)?.name).filter(Boolean).join(" · ")}${i === startCell ? " " + t("시작점") : ""} ${environmentLabels(i)}`;
           }}
           renderCell={(i) => {
             const x = i % world.size,
@@ -192,6 +193,7 @@ export function EditorBoard({
                 {!!actor?.marks.length && (
                   <span className="cell-mark">{actor.marks[0]}</span>
                 )}
+                {i === startCell && <span className="start-marker" aria-hidden="true" />}
                 {reaction && (
                   <span
                     key={`reaction-${feedback!.id}`}

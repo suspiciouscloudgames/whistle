@@ -9,6 +9,7 @@ import { placementChanges, type PlacementFeedback } from "@/lib/placement-feedba
 import { withSymbolColors } from "@/lib/symbol-color";
 import { contentKind, MAX_CONTENT_COUNT, mergeReceivedAssets } from "@/lib/content-limits";
 import { refillSymbols } from "@/lib/workshop";
+import { TURN_TILE_LIMIT, type TurnTiles } from "@/lib/turn-tiles";
 
 function copyDocument(world: World): World {
   return { ...clone({ ...world, assets: [] }), assets: world.assets.map(asset => ({
@@ -21,6 +22,7 @@ type PaintOptions = {
   assetId?: string;
   surface: Surface;
   terrainTool: TerrainTool;
+  turnTiles?: TurnTiles;
 };
 
 export function useWorldDocument(initialWorld: World, onChange: (world: World) => void) {
@@ -77,30 +79,33 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
     applyWorld(next);
   }, [applyWorld]);
 
-  const undo = useCallback(() => {
-    const previous = history.current.pop();
-    if (!previous) return false;
+  const undo = useCallback((allow?: (next: World) => boolean) => {
+    const previous = history.current.at(-1);
+    if (!previous || (allow && !allow(previous))) return false;
+    history.current.pop();
     future.current.push(copyDocument(worldRef.current));
     revealChanges(previous);
     applyWorld(previous);
     return true;
   }, [applyWorld, revealChanges]);
 
-  const redo = useCallback(() => {
-    const next = future.current.pop();
-    if (!next) return false;
+  const redo = useCallback((allow?: (next: World) => boolean) => {
+    const next = future.current.at(-1);
+    if (!next || (allow && !allow(next))) return false;
+    future.current.pop();
     history.current.push(copyDocument(worldRef.current));
     revealChanges(next);
     applyWorld(next);
     return true;
   }, [applyWorld, revealChanges]);
 
-  const paint = useCallback((cells: number[], erase: boolean, options: PaintOptions) => {
-    const { layer, assetId, surface, terrainTool } = options;
+  const paint = useCallback((cells: number[], erase: boolean, options: PaintOptions, allow?: (next: World) => boolean) => {
+    const { layer, assetId, surface, terrainTool, turnTiles } = options;
     if (layer === "symbols" && !worldRef.current.assets.some(asset => asset.id === assetId)) return;
     const first = !strokeBase.current;
     if (first) strokeBase.current = copyDocument(worldRef.current);
     const next = copyDocument(strokeBase.current!);
+    let limited = false;
     if (layer === "tiles") {
       next.terrain ??= flatTerrain(next.size);
       const waterEdits = new Set<number>();
@@ -115,11 +120,18 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
           }
         }
       }
+      const counted = turnTiles && new Set([...turnTiles.existing, ...turnTiles.added]);
+      let remaining = TURN_TILE_LIMIT - (turnTiles?.added.length ?? 0);
       for (const i of cells) {
         if (waterEdits.has(i)) continue;
         if ((terrainTool === "hole" || terrainTool === "erase") && i === next.start.z * next.size + next.start.x)
           continue;
         if (terrainTool === "erase") next.terrain.floating = true;
+        if (counted && terrainTool === "surface" && next.terrain.tiles[i].void && !counted.has(i)) {
+          if (remaining === 0) { limited = true; continue; }
+          remaining--;
+          counted.add(i);
+        }
         next.terrain.tiles[i] = editTile(next.terrain.tiles[i], terrainTool, surface);
       }
     }
@@ -135,15 +147,16 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
       }
     }
     refillSymbols(next);
-    if (samePlacement(worldRef.current, next)) {
+    if (samePlacement(worldRef.current, next) || (allow && !allow(next))) {
       if (first) strokeBase.current = null;
-      return;
+      return limited;
     }
     if (first) commit(next);
     else {
       revealChanges(next);
       applyWorld(next);
     }
+    return limited;
   }, [applyWorld, commit, revealChanges]);
 
   const endStroke = useCallback(() => { strokeBase.current = null; }, []);

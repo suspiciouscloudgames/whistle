@@ -5,10 +5,10 @@ import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { createMeetingCodec } from "../../lib/meeting-wire.ts";
 import { TURN_HINT } from "../../lib/workshop.ts";
+import { TURN_TILE_HINT } from "../../lib/turn-tiles.ts";
 import { MEETING_PATH, createMeetingRoom, addMeetingMember, meetingView, meetingPresence,
   publishMeeting, moveMeeting, whistleMeeting, meetingWhistleRecipients, whistleForViewer,
   disconnectMeetingMember, leaveMeetingMember, reconcileMeeting, meetingNeighbors, type MeetingRoom, type MeetingMessage } from "../../lib/meeting.ts";
-import { setMeetingNightSky } from "../../lib/meeting.ts";
 
 export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: number; reconnectMs?: number} = {}) {
   type Entry = {room:MeetingRoom; sockets:Map<string,WebSocket>; touched:number; queue:Promise<void>; presenceDirty?:boolean};
@@ -83,10 +83,6 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
           }
           if(message.type === "publish")changed=publishMeeting(entry.room,id,message.world,
             Array.isArray(message.received) ? message.received.filter((v: unknown) => typeof v === "string").slice(-10000) : [],false,true);
-          else if (message.type === "night-sky" && typeof message.eligible === "boolean") {
-            if (setMeetingNightSky(entry.room, id, message.eligible)) broadcast(entry, false);
-            return;
-          }
           else if (message.type === "whistle") {
             const whistle = whistleMeeting(entry.room, id);
             if (whistle) for (const peer of meetingWhistleRecipients(entry.room,id)) {
@@ -106,8 +102,9 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
           if (changed) broadcast(entry,true);
         } catch (error) {
           const message = error instanceof Error ? error.message : "연결 데이터를 저장하지 못했습니다.";
-          send(ws, { type: "error", message, ...(message === TURN_HINT ? {world:entry.room.members.get(id)!.document} : {}) });
-          if(message === TURN_HINT)broadcast(entry,true);
+          const rejected = message === TURN_HINT || message === TURN_TILE_HINT;
+          send(ws, { type: "error", message, ...(rejected ? {world:entry.room.members.get(id)!.document} : {}) });
+          if(rejected)broadcast(entry,true);
         }
         });
       });

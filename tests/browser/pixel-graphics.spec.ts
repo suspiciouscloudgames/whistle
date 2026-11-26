@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { LinearFilter } from "three";
 import { terrainFixtures } from "../terrain-fixtures";
 
 test.setTimeout(90_000);
@@ -71,9 +72,9 @@ test("forest and water keep a limited grayscale palette through resize, night an
   expect(errors).toEqual([]);
 });
 
-test.describe("native resolution text", () => {
+test.describe("pixel lettering", () => {
   test.use({deviceScaleFactor: 2});
-  test("existing text uses the thin font at display resolution", async ({page},testInfo) => {
+  test("stored Korean and Latin text stays in the selected ink on a stable pixel grid", async ({page},testInfo) => {
     const errors: string[]=[];
     page.on("pageerror",error=>errors.push(error.message));
     page.on("console",message=>{if(message.type()==="error")errors.push(message.text());});
@@ -102,11 +103,70 @@ test.describe("native resolution text", () => {
     expect(frame.width).toBe(frame.displayWidth*2);
     await expect.poll(()=>page.evaluate(()=>{
       const material=(globalThis as any).__textScene?.getObjectByName("symbol-content")?.material;
-      return {width:material?.map?.image?.naturalWidth,anisotropy:material?.map?.anisotropy};
-    })).toEqual({width:2048,anisotropy:16});
-    await page.locator(".scene canvas").screenshot({path:testInfo.outputPath("native-text.png")});
+      const image = material?.map?.image;
+      if (!image?.naturalWidth) return [];
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = image.width;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(image,0,0);
+      const rgba = ctx.getImageData(0,0,image.width,image.height).data;
+      return [image.width, [...new Set(rgba.filter((_,i) => i % 4 === 3))].sort((a,b) => a-b)];
+    })).toEqual([128,[0,85,170,255]]);
+    const denseSize = await page.evaluate(async () => {
+      const path = new URL("./lib/text-image.ts", document.baseURI).href;
+      const { contentImage } = await import(path);
+      const preview = new Image();
+      preview.src = contentImage({ text: "글자와 풍경 ".repeat(130) });
+      await preview.decode();
+      return preview.width;
+    });
+    expect(denseSize).toBeGreaterThan(128);
+    await page.locator(".scene canvas").screenshot({path:testInfo.outputPath("pixel-text.png")});
     expect(errors).toEqual([]);
   });
+});
+
+test("uploaded artwork keeps fine lines, transparency and color under a light filter", async ({page}) => {
+  await page.goto(".");
+  const result = await page.evaluate(async () => {
+    const path = new URL("./components/whistle/ContentTexture.ts", document.baseURI).href;
+    const { loadContentTexture } = await import(path);
+    const source = document.createElement("canvas");
+    source.width = 256; source.height = 111;
+    const ctx = source.getContext("2d")!;
+    const gradient = ctx.createLinearGradient(0, 0, 256, 0);
+    gradient.addColorStop(0, "#421800"); gradient.addColorStop(1, "#f8b578");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(20, 0, 236, 111);
+    ctx.fillStyle = "rgba(80, 120, 160, .5)";
+    ctx.fillRect(4, 0, 8, 111);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(20, 60, 236, 12);
+    ctx.fillStyle = "#111";
+    for (let x = 20; x < 256; x += 3) ctx.fillRect(x, 60, 1, 12);
+    const input = ctx.getImageData(0, 0, source.width, source.height).data;
+    const image = source.toDataURL();
+    let aspect = 0;
+    const load = () => new Promise<any>(resolve => {
+      const texture = loadContentTexture({ image }, (ratio: number) => { aspect = ratio; resolve(texture); });
+    });
+    const first = await load(), second = await load();
+    const canvas = first.image as HTMLCanvasElement;
+    const data = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+    const red = (x: number, y: number) => data[(y * canvas.width + x) * 4];
+    let maxShift = 0;
+    for (let i = 20 * 4; i < 256 * 4; i++) maxShift = Math.max(maxShift, Math.abs(data[i] - input[i]));
+    const linesIntact = Array.from({length: 78}, (_, i) => 20 + 3 * i)
+      .every(x => red(x + 1, 65) - red(x, 65) > 220);
+    first.dispose(); second.dispose();
+    return { width: canvas.width, height: canvas.height, aspect, clear: data[3], halfAlpha: data[6 * 4 + 3],
+      linesIntact, maxShift, magFilter: first.magFilter,
+      reused: canvas === second.image, original: source.toDataURL() === image };
+  });
+  expect(result).toMatchObject({width:256, height:111, aspect:256/111, clear:0, halfAlpha:128,
+    linesIntact:true, magFilter:LinearFilter, reused:true, original:true});
+  expect(result.maxShift).toBeGreaterThan(0);
+  expect(result.maxShift).toBeLessThanOrEqual(3);
 });
 
 test("user artwork keeps its colors in upright and surface placements", async ({ page }, testInfo) => {
@@ -200,6 +260,7 @@ test("water keeps reflected contrast without dense dots or hard tonal bands", as
     const renderer=new THREE.WebGLRenderer();
     const pixel=makePixelRenderer(renderer,{value:1});pixel.resize(256,256);
     const scene=new THREE.Scene();
+    scene.background=new THREE.Color(0xffffff);
     const camera=new THREE.OrthographicCamera(-2,2,2,-2,.1,10);
     camera.position.set(0,3,0);camera.up.set(0,0,-1);camera.lookAt(0,0,0);
     const geometry=new THREE.PlaneGeometry(4,4).rotateX(-Math.PI/2);
@@ -217,6 +278,17 @@ test("water keeps reflected contrast without dense dots or hard tonal bands", as
     const copy=document.createElement("canvas");copy.width=copy.height=256;
     const context=copy.getContext("2d")!;context.drawImage(renderer.domElement,0,0);
     const frame=context.getImageData(0,0,256,256).data;
+    const stripMean=(x:number,y:number,width:number,height:number)=>{
+      let sum=0;
+      for(let row=y;row<y+height;row++)for(let col=x;col<x+width;col++)sum+=frame[(row*256+col)*4];
+      return sum/(width*height);
+    };
+    const borderDifference=Math.max(
+      Math.abs(stripMean(0,64,2,128)-stripMean(16,64,2,128)),
+      Math.abs(stripMean(254,64,2,128)-stripMean(238,64,2,128)),
+      Math.abs(stripMean(32,0,64,2)-stripMean(32,16,64,2)),
+      Math.abs(stripMean(32,254,64,2)-stripMean(32,238,64,2)),
+    );
     let dark=0,light=0,jumps=0,count=0;
     for(let y=32;y<224;y++)for(let x=32;x<96;x++){
       const a=(y*256+x)*4,b=(y*256+x+128)*4;
@@ -239,9 +311,10 @@ test("water keeps reflected contrast without dense dots or hard tonal bands", as
     const gradientRange=Math.max(...columns)-Math.min(...columns);
     const screenshot=copy.toDataURL();
     reflected.dispose();geometry.dispose();water.material.dispose();pixel.dispose();renderer.dispose();
-    return {contrast:(light-dark)/count,roughness:jumps/count,gradientJump,gradientRange,screenshot};
+    return {contrast:(light-dark)/count,roughness:jumps/count,borderDifference,gradientJump,gradientRange,screenshot};
   });
   expect(result.contrast).toBeGreaterThan(65);
+  expect(result.borderDifference).toBeLessThan(10);
   expect(result.roughness).toBeLessThan(.18);
   expect(result.gradientJump).toBeLessThan(4);
   expect(result.gradientRange).toBeGreaterThan(35);

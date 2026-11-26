@@ -5,7 +5,8 @@ export function makeWaterReflection() {
   const plane = new THREE.PlaneGeometry(1, 1);
   const mirror = new Reflector(plane, { textureWidth: 256, textureHeight: 256, multisample: 0, clipBias: .003 });
   mirror.rotation.x = -Math.PI / 2;
-  const matrix = new THREE.Matrix4(), reflectionMatrix = new THREE.Matrix4(), inverseMirror = new THREE.Matrix4();
+  const viewProjection = new THREE.Matrix4(), capturedViewProjection = new THREE.Matrix4();
+  const reflectionMatrix = new THREE.Matrix4(), inverseMirror = new THREE.Matrix4();
   const frustum = new THREE.Frustum(), sphere = new THREE.Sphere();
   let lastTime = -Infinity, lastLevel: number | null = null;
   let lastTerrain: THREE.Group | null = null;
@@ -22,7 +23,8 @@ export function makeWaterReflection() {
       }
       if (!waters.length) return;
       camera.updateMatrixWorld();
-      frustum.setFromProjectionMatrix(matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+      viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      frustum.setFromProjectionMatrix(viewProjection);
       let selected: typeof waters[number] | undefined, nearest = Infinity;
       for (const water of waters) {
         water.updateWorldMatrix(true, false);
@@ -37,7 +39,7 @@ export function makeWaterReflection() {
       }
       if (!selected) return;
       const level = selected.userData.waterLevel as number;
-      if (lastLevel !== level || time - lastTime >= 120) {
+      if (lastLevel !== level || !capturedViewProjection.equals(viewProjection) || time - lastTime >= 120) {
         mirror.position.y = level;
         mirror.updateMatrixWorld(true);
         const hidden: THREE.Object3D[] = [];
@@ -54,6 +56,7 @@ export function makeWaterReflection() {
         }
         lastTime = time;
         lastLevel = level;
+        capturedViewProjection.copy(viewProjection);
         const textureMatrix = (mirror.material as THREE.ShaderMaterial).uniforms.textureMatrix.value as THREE.Matrix4;
         reflectionMatrix.copy(textureMatrix).multiply(inverseMirror.copy(mirror.matrixWorld).invert());
       }

@@ -228,6 +228,36 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.start-marker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 7px;
+  height: 7px;
+  border: 1px solid #111;
+  border-radius: 50%;
+  background: #fff;
+  z-index: 3;
+  pointer-events: none;
+}
+.start-marker::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -5px;
+  transform: translateX(-50%);
+  width: 1px;
+  height: 4px;
+  background: #111;
+}
+.has-effect .start-marker,
+.symbol-marker ~ .start-marker {
+  left: auto;
+  right: 3px;
+  top: 5px;
+  transform: none;
+}
 .canvas-tools {
   display: flex;
   align-items: center;
@@ -1042,6 +1072,10 @@ p {
   }
   .cell-mark {
     font-size: 7px;
+  }
+  .start-marker {
+    width: 6px;
+    height: 6px;
   }
   .play-shell {
     height: calc(100dvh - 64px);

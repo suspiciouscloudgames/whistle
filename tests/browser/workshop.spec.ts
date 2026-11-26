@@ -23,11 +23,20 @@ async function drag(page:Page,selector:string,index:number) {
 }
 
 test("title, neutral prompts, replenishment, direct editing, movement, reuse and reload",async({page},info)=>{
+  const world = createMeetingWorld(2);
+  world.terrain!.tiles[9 * world.size + 1] = {height:0, surface:"plain"};
+  await page.addInitScript(world => {
+    if (!sessionStorage.getItem("workshop-fixture")) {
+      localStorage.setItem("whistle.world.v2", JSON.stringify(world));
+      sessionStorage.setItem("workshop-fixture", "1");
+    }
+  }, world);
   await page.goto(`?meeting=workshop-solo-${Date.now()}`);await ready(page);
   await expect(page.getByRole("button",{name:/^(이미지|텍스트|사운드) 만들기$/})).toHaveCount(0);
   await expect(page.locator('[data-empty-symbol="true"]')).toHaveCount(1);
   await expect(page.locator('.empty-symbol .site-glyph')).toHaveCSS("color","rgb(119, 119, 119)");
   await title(page,"처음 만든 풍경");
+  await expect(page.locator('[data-cell="78"] [data-symbol-kind="image"][data-empty-symbol="true"]')).toBeVisible();
   await expect(page.locator('[data-empty-symbol="false"] .site-glyph')).not.toHaveCSS("color","rgb(119, 119, 119)");
   await expect(page.getByRole("button",{name:"배치: 처음 만든 풍경",exact:true})).toBeVisible();
   await page.getByRole("button",{name:"바닥",exact:true}).click();await page.locator('[data-cell="112"]').click();
@@ -41,7 +50,7 @@ test("title, neutral prompts, replenishment, direct editing, movement, reuse and
   await page.getByRole("dialog").locator('input[type="file"]').setInputFiles({name:"image.png",mimeType:"image/png",buffer:png});
   await page.getByRole("button",{name:"저장",exact:true}).click();
   await expect(page.locator('[data-empty-symbol="true"]')).toHaveCount(1);
-  await expect(page.locator('[data-symbol-kind="sound"][data-empty-symbol="true"]')).toHaveCount(1);
+  await expect(page.locator('[data-cell="109"] [data-symbol-kind="sound"][data-empty-symbol="true"]')).toBeVisible();
   await expect(page.getByRole("button",{name:"사운드 입력",exact:true})).toBeVisible();
   await page.locator(`[data-symbol-site="${imageId}"]`).click();
   await page.getByRole("button",{name:"저장",exact:true}).click();
@@ -111,6 +120,7 @@ test("one-minute turns lock placement, keep editors open and deliver before meet
     await a.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("차례가 바뀌어도 남은 초안");
     await expect(b.locator('.received-material')).toHaveCount(0);
     await expect(b.locator('.workspace [data-turn]')).toHaveAttribute("data-turn","own",{timeout:65_000});
+    await expect(b.locator(".turn-label")).toHaveText("배치할 차례 / 남은 타일 수: 3");
     await expect(a.getByRole("dialog")).toBeVisible();
     await expect(a.getByRole("textbox",{name:"텍스트 입력",exact:true})).toHaveValue("차례가 바뀌어도 남은 초안");
     await expect(a.getByRole("button",{name:"배치 삭제",exact:true})).toBeDisabled();
@@ -130,10 +140,45 @@ test("one-minute turns lock placement, keep editors open and deliver before meet
   } finally {await ca.close();await cb.close();}
 });
 
+test("a drag stops at three new tiles while editing and reusing those tiles stay available", async ({browser,baseURL}) => {
+  const ca=await browser.newContext({baseURL}), cb=await browser.newContext({baseURL});
+  try {
+    const a=await ca.newPage(), b=await cb.newPage(), url=`?meeting=tile-budget-${Date.now()}`;
+    await a.goto(url); await ready(a); await b.goto(url); await ready(b);
+    const label=a.locator(".turn-label");
+    await expect(label).toHaveText("배치할 차례 / 남은 타일 수: 3");
+    await expect(b.locator(".turn-label")).toHaveText("편집할 시간");
+    await a.getByRole("button",{name:"바닥",exact:true}).click();
+    await a.locator('[data-cell="0"]').click();
+    await expect(label).toHaveText("배치할 차례 / 남은 타일 수: 2");
+    await a.locator('[data-cell="1"]').click();
+    await expect(label).toHaveText("배치할 차례 / 남은 타일 수: 1");
+    await drag(a,'[data-cell="2"]',5);
+    await expect(label).toHaveText("배치할 차례 / 남은 타일 수: 0");
+    const row = async () => (await savedWorld(a)).terrain!.tiles.slice(0,6).map(tile => !tile.void);
+    await expect.poll(row).toEqual([true,true,true,false,false,false]);
+    await a.getByRole("button",{name:"되돌리기",exact:true}).click();
+    await expect.poll(row).toEqual([true,true,false,false,false,false]);
+    await a.locator('[data-cell="4"]').click();
+    await expect(a.locator(".toast").filter({hasText:"새 타일은 한 차례에 3칸까지"})).toBeVisible();
+    await a.getByRole("button",{name:"다시 실행",exact:true}).click();
+    await expect.poll(row).toEqual([true,true,true,false,false,false]);
+    await a.getByRole("button",{name:"거침",exact:true}).click();
+    await a.locator('[data-cell="114"]').click();
+    await expect.poll(async () => (await savedWorld(a)).terrain!.tiles[114].surface).toBe("rough");
+    await a.getByRole("button",{name:"타일 지우기",exact:true}).click();
+    await a.locator('[data-cell="1"]').click();
+    await a.locator('[data-cell="114"]').click();
+    await expect.poll(row).toEqual([true,false,true,false,false,false]);
+    await expect.poll(async () => (await savedWorld(a)).terrain!.tiles[114].void).toBe(true);
+    await expect(label).toHaveText("배치할 차례 / 남은 타일 수: 0");
+  } finally { await ca.close(); await cb.close(); }
+});
+
 test("the countdown advances without repeatedly rendering the idle editor",async({browser,baseURL})=>{
   const ca=await browser.newContext({baseURL}),cb=await browser.newContext({baseURL});
   const a=await ca.newPage(),b=await cb.newPage();
-  await a.route("**/app/page.tsx",async route=>{
+  await a.route(/\/app\/page\.tsx(?:\?|$)/,async route=>{
     const response=await route.fetch();
     const body=(await response.text()).replace("const { t } = useLanguage();",
       "globalThis.__editorRenders=(globalThis.__editorRenders??0)+1; const { t } = useLanguage();");

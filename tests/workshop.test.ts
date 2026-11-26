@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createMeetingWorld, createMeetingRoom, addMeetingMember, publishMeeting, meetingTurn, advanceMeetingTurns,
   meetingView, moveMeeting, disconnectMeetingMember, TURN_DURATION, type MeetingRoom } from "../lib/meeting.ts";
 import { emptySymbol, completeSymbol, refillSymbols, initializeWorkshop, isContentEdit, TURN_HINT } from "../lib/workshop.ts";
+import { TURN_TILE_HINT } from "../lib/turn-tiles.ts";
 import { validateWorld, type World, type Asset } from "../lib/world.ts";
 import { deriveStructures } from "../lib/terrain.ts";
 import { contentKind, MAX_LIBRARY_SIZE } from "../lib/content-limits.ts";
@@ -117,7 +118,7 @@ test("all floor surfaces can receive prompts, including lowered water with no ho
   assert.equal(missing.assets.filter(emptySymbol).length,0);
 });
 
-test("new prompts use the most open floor and keep clear of all kinds, received symbols and copies",()=>{
+test("each new prompt uses the nearest spaced floor to the symbol just filled",()=>{
   const w=createMeetingWorld(2),title=w.assets.find(emptySymbol)!;
   for(const tile of w.terrain!.tiles)tile.void=true;
   w.assets.push({...title,id:"received-image",prompt:undefined,image,received:true},
@@ -125,11 +126,14 @@ test("new prompts use the most open floor and keep clear of all kinds, received 
   w.objects.push({id:"picture",asset:"received-image",x:0,z:0,rotation:0,scale:1},
     {id:"sound",asset:"received-sound",x:11,z:0,rotation:0,scale:1},
     {id:"title-copy",asset:title.id,x:11,z:9,rotation:0,scale:1});
-  for(const [x,z] of [[0,1],[10,0],[5,8],[0,7],[5,3],[11,6]])w.terrain!.tiles[z*w.size+x]={surface:"plain",height:0};
+  for(const [x,z] of [[0,1],[10,0],[5,8],[0,7],[5,3],[11,6],[2,9],[5,6]])w.terrain!.tiles[z*w.size+x]={surface:"plain",height:0};
   fill(w,title);
   const placed=w.objects.at(-1)!;
-  assert.deepEqual([placed.x,placed.z],[5,3]);
+  assert.deepEqual([placed.x,placed.z],[5,6]);
   assert.ok(w.objects.slice(0,-1).every(o=>Math.hypot(placed.x-o.x,placed.z-o.z)>=3));
+  fill(w,w.assets.find(emptySymbol)!);
+  const next=w.objects.at(-1)!;
+  assert.deepEqual([next.x,next.z],[5,3]);
 });
 
 test("old saves keep one empty symbol and all completed work, including during the other player's turn",()=>{
@@ -207,6 +211,36 @@ test("a server-owned minute alternates and delivers filled materials before play
   assert.equal(room.links.length,0);
   assert.equal(advanceMeetingTurns(room,now+TURN_DURATION+100),false);
   assert.equal(meetingView(room,"b").materials.length,1);
+});
+
+test("each paired turn allows three distinct new tile positions across publishes, erasure and retries", () => {
+  const now = Date.now(), room = pair(now);
+  const world = structuredClone(room.members.get("a")!.document), tiles = world.terrain!.tiles;
+  const publish = (time = now + 1) => publishMeeting(room, "a", world, [], false, true, time);
+  const added = () => meetingTurn(room, "a")!.tiles!.added;
+  for (const i of [0, 1, 2, 3]) tiles[i] = { height: 0, surface: "plain" };
+  assert.throws(() => publish(), {message: TURN_TILE_HINT});
+  assert.deepEqual(added(), []);
+  tiles[3].void = true;
+  publish(); publish();
+  assert.deepEqual(added(), [0,1,2]);
+  assert.equal(meetingTurn(room, "b")?.tiles, undefined);
+  tiles[0].void = true;
+  publish();
+  tiles[3].void = false;
+  assert.throws(() => publish(), {message: TURN_TILE_HINT});
+  tiles[3].void = true;
+  tiles[0].void = false;
+  tiles[1].surface = "rough";
+  tiles[world.start.z * world.size + world.start.x].height++;
+  publish();
+  assert.deepEqual(added(), [0,1,2]);
+  advanceMeetingTurns(room, now + TURN_DURATION);
+  assert.deepEqual(meetingTurn(room, "b")!.tiles!.added, []);
+  advanceMeetingTurns(room, now + 2 * TURN_DURATION);
+  tiles[3].void = false;
+  publish(now + 2 * TURN_DURATION + 1);
+  assert.deepEqual(added(), [3]);
 });
 
 test("opening a world ends both turns and permits terrain, placement, movement and deletion immediately",()=>{

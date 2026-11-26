@@ -10,7 +10,6 @@ import type { WorldDerivation } from "@/lib/world-derivation";
 import { isHole } from "@/lib/tile";
 import { renderQuality } from "@/lib/render-quality";
 
-const TOGGLE_CODE = "Backquote";
 const REFRESH_MS = 250;
 /** 오버레이 폭(글자 수 기준). 가장 긴 줄보다 넉넉하게 */
 const BOX_WIDTH_CH = 88;
@@ -19,6 +18,7 @@ const f = (v: number | undefined, digits = 2) => (v === undefined || !Number.isF
 const pad = (s: string, n: number) => (s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length));
 
 type Props = {
+  visible: boolean;
   audio: { debug(): GameAudioDebug };
   getWorld: () => World;
   derivation: WorldDerivation;
@@ -132,21 +132,11 @@ function describe(info: GameAudioDebug, world: World, derivation: WorldDerivatio
   return lines.join("\n");
 }
 
-export function DebugOverlay({ audio, getWorld, derivation }: Props) {
-  const [visible, setVisible] = useState(() => new URLSearchParams(location.search).has("debug"));
+export function DebugOverlay({ visible, audio, getWorld, derivation }: Props) {
   const [text, setText] = useState("");
   const frame = useFrameStats(visible);
   const latest = useRef({ audio, getWorld, derivation });
   latest.current = { audio, getWorld, derivation };
-
-  useEffect(() => {
-    const toggle = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLElement && (event.target.isContentEditable || event.target.closest("input, textarea, select"))) return;
-      if (event.code === TOGGLE_CODE && !event.repeat) setVisible((v) => !v);
-    };
-    window.addEventListener("keydown", toggle);
-    return () => window.removeEventListener("keydown", toggle);
-  }, []);
 
   useEffect(() => {
     if (!visible) return;

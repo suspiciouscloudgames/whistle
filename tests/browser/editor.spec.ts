@@ -53,21 +53,33 @@ for (const [name, viewport] of Object.entries({
 })) {
   test(`play controls and return preserve editor state and focus: ${name}`, async ({ page }) => {
     await page.setViewportSize(viewport);
-    const positionMarkers = page.getByRole("group", { name: "격자" }).locator(".start-marker, .meeting-map-player");
-    await expect(positionMarkers).toHaveCount(0);
+    const grid = page.getByRole("group", { name: "격자" });
+    const startMarker = grid.getByRole("button", { name: /^G11 .*시작점/ }).locator(".start-marker");
+    await expect(startMarker).toBeVisible();
+    await expect(grid.locator(".start-marker")).toHaveCount(1);
+    await expect(grid.locator(".meeting-map-player")).toHaveCount(0);
     await page.getByRole("button", { name: "높이기", exact: true }).click();
     await page.locator('[data-cell="0"]').click();
     await page.evaluate(() => {
       (window as Window & { boardBefore?: Element | null }).boardBefore = document.querySelector(".canvas-panel");
     });
     await page.getByRole("button", { name: "플레이", exact: true }).click();
-    await expect(page.locator(".play-shell canvas")).toBeVisible();
+    const canvas = page.locator(".play-shell canvas");
+    await expect(canvas).toHaveAttribute("data-ready", "true");
+    const startZ = Number(await canvas.getAttribute("data-player-z"));
+    await page.keyboard.down("KeyW");
+    try {
+      await expect.poll(async () => Number(await canvas.getAttribute("data-player-z"))).toBeLessThan(startZ - .6);
+    } finally {
+      await page.keyboard.up("KeyW");
+    }
     await expect(page.locator(".workspace")).toBeHidden();
     await page.getByRole("button", { name: "기어가기", exact: true }).click();
     await expect(page.getByRole("button", { name: "기어가기", exact: true })).toHaveAttribute("aria-pressed", "true");
     await page.keyboard.press("Escape");
     await expect(page.locator(".workspace")).toBeVisible();
-    await expect(positionMarkers).toHaveCount(0);
+    await expect(startMarker).toBeVisible();
+    await expect(grid.locator(".meeting-map-player")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "만들기", exact: true })).toBeFocused();
     expect(await page.evaluate(() => (window as Window & { boardBefore?: Element | null }).boardBefore === document.querySelector(".canvas-panel"))).toBe(true);
     await expect(page.locator('[data-cell="0"]')).toHaveAccessibleName(/높이 1/);

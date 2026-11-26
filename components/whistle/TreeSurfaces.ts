@@ -1,4 +1,4 @@
-import { contentImage } from "../../lib/text-image.ts";
+import { loadContentTexture } from "./ContentTexture.ts";
 import { addNeutralGrain } from "./NeutralGrain.ts";
 import * as THREE from "three";
 import { environmentAt, type Environment } from "../../lib/environment.ts";
@@ -54,6 +54,7 @@ export function makeTreeSurfaces(world: World, environment: Environment, clock: 
         projection.size.value = (entry.mesh.geometry.boundingBox!.max.y - entry.mesh.geometry.boundingBox!.min.y) * (actor?.scale ?? 1);
         const key = asset?.image ?? "";
         if (actor && asset?.image) applied.add(actor.id);
+        entry.mesh.userData.placementId = actor?.id;
         if (key === entry.key) continue;
         entry.key = key;
         const material = entry.mesh.material;
@@ -61,13 +62,10 @@ export function makeTreeSurfaces(world: World, environment: Environment, clock: 
         material.map = null;
         material.color.set(asset?.image ? "#ffffff" : entry.bark.color);
         if (asset?.image) {
-          material.map = new THREE.TextureLoader().load(contentImage(asset)!);
-          material.map.colorSpace = THREE.SRGBColorSpace;
-          material.map.anisotropy = asset.text ? 16 : 1;
+          material.map = loadContentTexture(asset);
           material.map.wrapS = THREE.RepeatWrapping;
         }
         material.needsUpdate = true;
-        entry.mesh.userData.placementId = actor?.id;
       }
       return applied;
     },

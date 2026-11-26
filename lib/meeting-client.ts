@@ -19,6 +19,7 @@ export function sameMeetingPresence(a: MeetingPresence, b: MeetingPresence) {
   return a.onlineCount === b.onlineCount && a.canWhistle === b.canWhistle &&
     a.turn?.owner === b.turn?.owner && a.turn?.partner === b.turn?.partner &&
     a.turn?.startedAt === b.turn?.startedAt && a.turn?.endsAt === b.turn?.endsAt &&
+    a.turn?.tiles?.added.length === b.turn?.tiles?.added.length &&
     a.peers.length === b.peers.length && a.peers.every((peer, i) => {
       const next = b.peers[i];
       return peer.id === next.id && peer.slot === next.slot && peer.online === next.online && peer.playing === next.playing;

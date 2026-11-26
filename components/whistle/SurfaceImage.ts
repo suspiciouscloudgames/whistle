@@ -1,4 +1,4 @@
-import { contentImage } from "../../lib/text-image.ts";
+import { loadContentTexture } from "./ContentTexture.ts";
 import * as THREE from "three";
 import { DecalGeometry } from "three/addons/geometries/DecalGeometry.js";
 import type { Asset, Placed, World } from "../../lib/world.ts";
@@ -63,16 +63,12 @@ export function makeSurfaceImage(asset: Asset, placed: Placed, world: World, ter
   const ground = terrain.getObjectByName("continuous-ground") as THREE.Mesh | undefined;
   if (!ground || !asset.image) return group;
   let disposed=false;
-  const texture = new THREE.TextureLoader().load(contentImage(asset)!,loaded=>{
+  const texture = loadContentTexture(asset, aspect => {
     if(disposed)return;
-    const image=loaded.image as HTMLImageElement;
-    const aspect=image.naturalWidth/Math.max(1,image.naturalHeight);
     const old=picture.geometry;
     picture.geometry=surfaceImageGeometry(ground,world,placed,aspect);
     old.dispose();
   });
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy=asset.text?16:8;
   const material = new THREE.MeshStandardMaterial({
     map: texture, transparent: true, alphaTest: .001, roughness: 1,
     depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4,

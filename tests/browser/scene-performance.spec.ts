@@ -81,7 +81,7 @@ test("artwork is reused for unrelated edits and refreshes after image replacemen
   const errors = await open(page, true);
   const picture = () => page.evaluate(() => {
     const mesh = (globalThis as any).__performanceScene.getObjectByName("symbol-content");
-    return { id: mesh?.parent.uuid, image: mesh?.material.map?.image?.src };
+    return { id: mesh?.parent.uuid, image: mesh?.material.map?.image?.toDataURL() };
   });
   await expect.poll(async () => (await picture()).image).toMatch(/^data:image/);
   const initial = await picture();
@@ -180,6 +180,10 @@ test("cached water reflections avoid unrelated matrix updates and follow camera 
     const initial = { draws, updates, low: low.material.uniforms.hasReflection.value };
     reflection.update(renderer, scene, camera, terrain, 50);
     const cached = { draws, updates };
+    const initialMatrix = low.material.uniforms.reflectionMatrix.value.clone();
+    camera.rotateY(.08);
+    reflection.update(renderer, scene, camera, terrain, 55);
+    const rotated = { draws, changed: !low.material.uniforms.reflectionMatrix.value.equals(initialMatrix) };
     look(10); reflection.update(renderer, scene, camera, terrain, 60);
     const selected = { draws, low: low.material.uniforms.hasReflection.value, high: high.material.uniforms.hasReflection.value };
     const matrix = high.material.uniforms.reflectionMatrix.value.toArray();
@@ -191,17 +195,18 @@ test("cached water reflections avoid unrelated matrix updates and follow camera 
     const error = renderer.getContext().getError();
     for (const mesh of [low, high, line]) { mesh.geometry.dispose(); mesh.material.dispose(); }
     reflection.dispose(); renderer.dispose();
-    return { initial, cached, selected, outside, matrix, moved, error, trailInReflections, trailVisible: line.visible };
+    return { initial, cached, rotated, selected, outside, matrix, moved, error, trailInReflections, trailVisible: line.visible };
   });
   expect(result.initial.draws).toBe(1);
   expect(result.initial.low).toBe(1);
   expect(result.cached).toEqual({ draws: 1, updates: result.initial.updates });
-  expect(result.selected).toEqual({ draws: 2, low: 0, high: 1 });
+  expect(result.rotated).toEqual({ draws: 2, changed: true });
+  expect(result.selected).toEqual({ draws: 3, low: 0, high: 1 });
   expect(result.outside).toEqual([0, 0]);
-  expect(result.moved.draws).toBe(3);
+  expect(result.moved.draws).toBe(4);
   expect(result.moved.high).toBe(1);
   expect(result.moved.matrix).not.toEqual(result.matrix);
-  expect(result.trailInReflections).toEqual([false, false, false]);
+  expect(result.trailInReflections).toEqual([false, false, false, false]);
   expect(result.trailVisible).toBe(true);
   expect(result.error).toBe(0);
 });
