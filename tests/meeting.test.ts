@@ -426,7 +426,8 @@ test("a new arrival preserves a disconnected neighbor during the reconnect grace
   const v=meetingView(r,"a");assert.equal(v.connections[0].id,gate.id);
   assert.equal(v.connections[0].online,false);
   join(r,"b",now+2);
-  assert.deepEqual(meetingView(r,"a").recipients,["c"]);
+  assert.deepEqual(meetingView(r,"a").recipients,["b"]);
+  assert.deepEqual(meetingView(r,"c").recipients,[]);
   assert.equal(meetingView(r,"a").connections[0].id,gate.id);
 });
 
@@ -465,4 +466,63 @@ test("reconnecting after walking home keeps the current safe position instead of
   }
   const floorReset = { ...view, reset: { ...view.reset, reason: "floor" as const } };
   assert.equal(resumeMeetingPosition(floorReset, home), floorReset);
+});
+
+test("a first gate crossing places one bonus on the bordering home tile on either side, even after a stale publish", () => {
+  for (const [visitor,host] of [["a","b"],["b","a"]]) {
+    for (const occupied of [false,true]) {
+      const room=setup();
+      use(room,visitor,author(room,host));
+      const gate=meetingView(room,visitor).connections[0];
+      const x=gate.x===12 ? 0 : 11, z=gate.z;
+      const own=structuredClone(room.members.get(visitor)!.document);
+      own.terrain!.tiles[z*12+x]={height:0,surface:"plain"};
+      if (occupied) own.objects.push({...own.objects[0],id:"already-here",x,z});
+      publishMeeting(room,visitor,own);
+      const atGate = () => room.members.get(visitor)!.document.objects.filter(o=>o.x===x && o.z===z);
+      open(room,visitor,host);
+      assert.equal(atGate().length,1);
+      assert.equal(atGate()[0].id,occupied ? "already-here" : gate.id+"-bonus");
+      const expected=structuredClone(atGate());
+      assert.equal(room.members.get(visitor)!.document.workshop!.lastGate,gate.id);
+      assert.equal(room.members.get(host)!.document.workshop!.lastGate,undefined);
+      publishMeeting(room,visitor,own);
+      open(room,visitor,host);
+      assert.deepEqual(atGate(),expected);
+      const edited=structuredClone(room.members.get(visitor)!.document);
+      edited.objects=edited.objects.filter(o=>o.x!==x || o.z!==z);
+      publishMeeting(room,visitor,edited);
+      open(room,visitor,host);
+      assert.deepEqual(atGate(),[]);
+    }
+  }
+});
+
+test("a reconnect that never publishes its document releases the waiting partner at the grace deadline", () => {
+  const room=setup(), now=Date.now();
+  disconnectMeetingMember(room,"b",now);
+  addMeetingMember(room,"b",now+2000,true);
+  join(room,"late",now+3000);
+  assert.equal(meetingTurn(room,"a"),undefined);
+  reconcileMeeting(room,now+60_000);
+  assert.equal(meetingTurn(room,"a")?.partner,"late");
+});
+
+test("an interrupted return to an opened world only restores the link inside the reservation", () => {
+  for (const expired of [false, true]) {
+    const room = setup();
+    use(room,"a",author(room,"b"));
+    open(room,"a","b");
+    const now = Date.now();
+    disconnectMeetingMember(room,"b",now);
+    addMeetingMember(room,"b",now+5000,true);
+    assert.equal(meetingPresence(room,"a").canWhistle,false);
+    assert.deepEqual(meetingView(room,"a").joined,["a"]);
+    const resumeAt = now + (expired ? 65_000 : 10_000);
+    publishMeeting(room,"b",room.members.get("b")!.document,[],false,true,resumeAt);
+    assert.deepEqual(meetingView(room,"a").recipients,["b"]);
+    assert.deepEqual(meetingView(room,"a").joined,expired ? ["a"] : ["a","b"]);
+    assert.equal(meetingPresence(room,"a").canWhistle,!expired);
+    assert.equal(meetingTurn(room,"a",resumeAt)?.partner,expired ? "b" : undefined);
+  }
 });

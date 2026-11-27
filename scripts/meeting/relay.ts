@@ -8,7 +8,7 @@ import { TURN_HINT } from "../../lib/workshop.ts";
 import { TURN_TILE_HINT } from "../../lib/turn-tiles.ts";
 import { MEETING_PATH, createMeetingRoom, addMeetingMember, meetingView, meetingPresence,
   publishMeeting, moveMeeting, whistleMeeting, meetingWhistleRecipients, whistleForViewer,
-  disconnectMeetingMember, leaveMeetingMember, reconcileMeeting, meetingNeighbors, type MeetingRoom, type MeetingMessage } from "../../lib/meeting.ts";
+  disconnectMeetingMember, leaveMeetingMember, reconcileMeeting, MEETING_RECONNECT_MS, meetingWorld, meetingPartner, type MeetingRoom, type MeetingMessage } from "../../lib/meeting.ts";
 
 export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: number; reconnectMs?: number} = {}) {
   type Entry = {room:MeetingRoom; sockets:Map<string,WebSocket>; touched:number; queue:Promise<void>; presenceDirty?:boolean};
@@ -16,7 +16,7 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
   let closing: Promise<void> | undefined;
   const getRoom = (key:string) => {
     let entry = rooms.get(key);
-    if (!entry) { entry = {room:createMeetingRoom(),sockets:new Map(),touched:Date.now(),queue:Promise.resolve()};rooms.set(key,entry); }
+    if (!entry) { entry = {room:createMeetingRoom(undefined,options.reconnectMs),sockets:new Map(),touched:Date.now(),queue:Promise.resolve()};rooms.set(key,entry); }
     return entry;
   };
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16*1024*1024, perMessageDeflate: false });
@@ -28,12 +28,26 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
     try { for (const frame of codec.encode(message)) socket.send(frame); }
     catch { socket.close(1009, "Material cache full"); }
   };
+  type Delivered = {world: ReturnType<typeof meetingWorld>; partner?: string; reset: number; materials: number; received: number; ready: boolean; end?: number};
+  const delivered = new WeakMap<WebSocket, Delivered>();
   const broadcast = (entry: Entry, state: boolean, recipients?:Set<string>) => {
     if(!recipients)entry.presenceDirty=false;
     for (const [id, socket] of entry.sockets) {
       if(recipients&&!recipients.has(id))continue;
       const presence = meetingPresence(entry.room, id);
-      send(socket, state ? { type: "state", view: meetingView(entry.room, id), presence } : { type: "presence", presence });
+      if (state) {
+        const member = entry.room.members.get(id)!;
+        const current = {world: meetingWorld(entry.room,id), partner: meetingPartner(entry.room,id), reset: member.reset.id,
+          materials: member.materials.size, received: member.received.size, ready: member.ready, end: presence.turn?.endsAt};
+        const last = delivered.get(socket);
+        if (!last || current.world !== last.world || current.partner !== last.partner || current.reset !== last.reset ||
+            current.materials !== last.materials || current.received !== last.received || current.ready !== last.ready || current.end !== last.end) {
+          send(socket, {type:"state", view:meetingView(entry.room,id), presence});
+          delivered.set(socket,current);
+          continue;
+        }
+      }
+      send(socket,{type:"presence",presence});
     }
   };
   const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -53,7 +67,7 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
       if (existing?.resumeKey && existing.resumeKey !== resumeKey) {
         send(ws,{type:"error",message:"이 세계의 접속 정보를 확인할 수 없습니다."});ws.close(1008);return;
       }
-      try { addMeetingMember(entry.room, id).resumeKey = resumeKey; }
+      try { addMeetingMember(entry.room, id, Date.now(), true, options.reconnectMs).resumeKey = resumeKey; }
       catch (error) { send(ws, { type: "error", message: (error as Error).message }); ws.close(1008); return; }
       const previous = entry.sockets.get(id);
       entry.sockets.set(id, ws); entry.touched = Date.now();
@@ -78,7 +92,7 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
           let changed = false;
           if(message.type === "leave") {
             entry.sockets.delete(id);leaveMeetingMember(entry.room,id);
-            if(!entry.sockets.size && rooms.get(key)===entry)rooms.delete(key);
+            if(!entry.room.members.size && rooms.get(key)===entry)rooms.delete(key);
             broadcast(entry,true);ws.close(4002,"World restarted");return;
           }
           if(message.type === "publish")changed=publishMeeting(entry.room,id,message.world,
@@ -113,7 +127,6 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
         if (entry.sockets.get(id) !== ws) return;
         entry.sockets.delete(id);
         disconnectMeetingMember(entry.room,id);entry.touched=Date.now();
-        if(!entry.sockets.size && rooms.get(key)===entry)rooms.delete(key);
         entry.queue=entry.queue.then(()=>{
           if(entry.sockets.has(id))return;
           broadcast(entry,true);
@@ -127,9 +140,15 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
   },80);
   presenceTick.unref();
   const cleanup = setInterval(() => {
-    for(const entry of rooms.values())if(entry.sockets.size)entry.queue=entry.queue.then(()=>{
-      if(reconcileMeeting(entry.room,Date.now(),options.reconnectMs))broadcast(entry,true);
-    }).catch(()=>{});
+    for(const [key,entry] of rooms) {
+      if (!entry.sockets.size) {
+        if (Date.now()-entry.touched >= (options.reconnectMs ?? MEETING_RECONNECT_MS)) rooms.delete(key);
+        continue;
+      }
+      entry.queue=entry.queue.then(()=>{
+        if(reconcileMeeting(entry.room,Date.now(),options.reconnectMs))broadcast(entry,true);
+      }).catch(()=>{});
+    }
   }, options.cleanupMs ?? 1_000);
   cleanup.unref();
   const close = () => {

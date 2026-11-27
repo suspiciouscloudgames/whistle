@@ -29,7 +29,7 @@ export type Asset = {
   color: string;
   glyphColor?: string;
   received?: boolean;
-  prompt?: { kind: "image" | "text" | "sound"; title?: boolean };
+  prompt?: { kind: "image" | "text" | "sound"; title?: boolean; reward?: true };
   image?: string;
   originalImage?: string;
   sound?: Recording;
@@ -88,6 +88,8 @@ export type World = {
     id: string;
     serial: number;
     next: number;
+    lastGate?: string;
+    growth?: { seen: number[]; islands: number[][]; remainder: number; pending: number[] };
     pending: { kind: "image" | "text" | "sound"; x: number; z: number; title?: boolean }[];
   };
 };
@@ -492,11 +494,21 @@ export function validateWorld(input: unknown, libraryLimit = MAX_CONTENT_COUNT):
   const ids = new Set<string>();
   if (w.workshop !== undefined) {
     const s = w.workshop;
-    if (!s || !text(s.id, 40) || !/^[a-zA-Z0-9-]+$/.test(s.id) || !Number.isSafeInteger(s.serial) || !number(s.serial, 0, 1000000) ||
+    if (!s || (s.lastGate !== undefined && !text(s.lastGate, 80)) || !text(s.id, 40) || !/^[a-zA-Z0-9-]+$/.test(s.id) || !Number.isSafeInteger(s.serial) || !number(s.serial, 0, 1000000) ||
         !Number.isInteger(s.next) || !number(s.next, 0, 2) || !Array.isArray(s.pending) || s.pending.length > 6 ||
         s.pending.some(p => !p || !["image", "text", "sound"].includes(p.kind) ||
           !Number.isInteger(p.x) || !Number.isInteger(p.z) || !number(p.x, 0, w.size - 1) || !number(p.z, 0, w.size - 1) ||
           (p.title !== undefined && typeof p.title !== "boolean"))) throw Error("기호 데이터가 올바르지 않습니다.");
+    if (s.growth !== undefined) {
+      const g = s.growth, cells = w.size * w.size;
+      const validCells = (value: unknown): value is number[] => Array.isArray(value) && value.length <= cells &&
+        value.every(i => Number.isInteger(i) && i >= 0 && i < cells);
+      if (!g || !validCells(g.seen) || new Set(g.seen).size !== g.seen.length ||
+          !Number.isInteger(g.remainder) || !number(g.remainder, 0, 2) || !validCells(g.pending) ||
+          !Array.isArray(g.islands) || g.islands.length > cells || !g.islands.every(i => validCells(i) && i.length > 0) ||
+          g.islands.flat().length > cells || new Set(g.islands.flat()).size !== g.islands.flat().length)
+        throw Error("기호 데이터가 올바르지 않습니다.");
+    }
   }
   if (w.connectionFootings !== undefined) {
     const footings = w.connectionFootings;
@@ -518,6 +530,7 @@ export function validateWorld(input: unknown, libraryLimit = MAX_CONTENT_COUNT):
       (a.glyphColor !== undefined && !/^#[0-9a-f]{6}$/i.test(a.glyphColor)) ||
       (a.received !== undefined && typeof a.received !== "boolean") ||
       (a.prompt !== undefined && (!a.prompt || !["image", "text", "sound"].includes(a.prompt.kind) ||
+        (a.prompt.reward !== undefined && (a.prompt.reward !== true || a.prompt.title)) ||
         (a.prompt.title !== undefined && (typeof a.prompt.title !== "boolean" || a.prompt.kind !== "text")))) ||
       typeof a.solid !== "boolean" ||
       (a.sound !== undefined && (!validRecording(a.sound) || a.solid || a.image !== undefined || a.text !== undefined)) ||

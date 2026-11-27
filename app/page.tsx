@@ -239,8 +239,8 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     if(!ready)return;
     if(!meeting.enabled)syncConnectionFootings([]);
     else if(meeting.view.documentReady)
-      syncConnectionFootings(meeting.view.ownWorld.connectionFootings);
-  },[ready,meeting.enabled,meeting.status,meeting.view.documentReady,meeting.view.ownWorld.connectionFootings,syncConnectionFootings]);
+      syncConnectionFootings(meeting.view.ownWorld.connectionFootings, meeting.view.ownWorld);
+  },[ready,meeting.enabled,meeting.status,meeting.view.documentReady,meeting.view.ownWorld,syncConnectionFootings]);
   useEffect(() => {
     if(!ready || !meeting.enabled || meeting.status!=="online" || !meeting.view.recipients.length)return;
     const incoming = meeting.view.materials.filter(a => !receivedMaterials.current.has(a.id)) ?? [];

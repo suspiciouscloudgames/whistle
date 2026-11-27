@@ -7,6 +7,7 @@ type Reading = {
   asset: string; content: string;
   phase: "away" | "reading" | "passed";
   progress: number; opacity: number; departure: number;
+  fading?: boolean; readableFor: number;
   approach?: { x: number; z: number };
 };
 type Target = {
@@ -34,7 +35,7 @@ export function makeContentPresentation() {
           ground: model.userData.surface && surfaceHeight ? surfaceHeight(actor) : model.position.y,
           attached: asset.placement === "surface" || asset.placement === "field" };
         if (content) target.reading = existing?.asset === asset.id && existing.content === content ? existing
-          : { asset: asset.id, content, phase: "away", progress: 0, opacity: 0, departure: 0 };
+          : { asset: asset.id, content, phase: "away", progress: 0, opacity: 0, departure: 0, readableFor: 0 };
         model.traverse(object => {
           const mesh = object as THREE.Mesh;
           if (!mesh.material) return;
@@ -65,6 +66,12 @@ export function makeContentPresentation() {
         const radius = Math.min(1.5, .83 + .25 * actor.scale);
         const along = ((actor.x - fromX) * dx + (actor.z - fromZ) * dz) / lengthSq;
         const nearest = THREE.MathUtils.clamp(along, 0, 1);
+        const length = Math.sqrt(lengthSq);
+        const lateral = Math.abs((actor.x - fromX) * dz - (actor.z - fromZ) * dx) / length;
+        if (feet >= ground - 1.65 && feet <= ground + height && along >= 0 && lateral <= radius &&
+            Math.hypot(fromX + nearest * dx - actor.x, fromZ + nearest * dz - actor.z) <= 1.65) {
+          reading.fading = true;
+        }
         if (feet < ground - 1.65 || feet > ground + height ||
             Math.hypot(fromX + nearest * dx - actor.x, fromZ + nearest * dz - actor.z) > radius) {
           reading.approach = undefined;
@@ -74,6 +81,7 @@ export function makeContentPresentation() {
         const dir = reading.approach;
         if (dir && (x - actor.x) * dir.x + (z - actor.z) * dir.z >= 0 && dx * dir.x + dz * dir.z > 0) {
           reading.phase = "passed";
+          reading.fading = true;
           reading.approach = undefined;
           passed++;
         }
@@ -102,19 +110,20 @@ export function makeContentPresentation() {
           else point.set(actor.x * 2 - size + 1, ground + .8, actor.z * 2 - size + 1);
           const distance = point.distanceTo(camera.position);
           if (reading) {
-            if (distance >= 8.5) { reading.phase = "away"; reading.approach = undefined; }
-            if (reading.phase === "away" && distance <= 6.5) {
+            if (distance >= 13 || (reading.fading && distance >= 8.5)) { reading.phase = "away"; reading.approach = undefined; reading.fading = false; }
+            if (reading.phase === "away" && distance <= 11) {
               reading.phase = "reading";
-              reading.progress = reading.opacity = reading.departure = 0;
+              reading.progress = reading.opacity = reading.departure = reading.readableFor = 0;
             }
             if (!attached) {
-              if (reading.phase === "reading") {
-                const duration = reducedMotion ? .45 : masks[0]?.duration ?? 1.6;
+              if (reading.phase !== "away" && (!reading.fading || reading.readableFor < .3)) {
+                const duration = reducedMotion ? .45 : Math.min(masks[0]?.duration ?? 1.6, 2.4);
                 reading.progress = Math.min(1, reading.progress + dt / duration);
+                if (reading.progress === 1) reading.readableFor += dt;
                 reading.opacity = Math.min(1, reading.opacity + dt / (asset.text || reducedMotion ? .45 : duration));
               } else {
                 reading.opacity = Math.max(0, reading.opacity - dt / 1.35);
-                if (reading.phase === "passed") reading.departure = Math.min(1, reading.departure + dt / 1.35);
+                if (reading.fading || reading.phase === "passed") reading.departure = Math.min(1, reading.departure + dt / 1.35);
                 if (!reading.opacity) reading.progress = 0;
               }
               opacity = THREE.MathUtils.smoothstep(reading.opacity, 0, 1);

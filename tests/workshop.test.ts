@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createMeetingWorld, createMeetingRoom, addMeetingMember, publishMeeting, meetingTurn, advanceMeetingTurns,
-  meetingView, moveMeeting, disconnectMeetingMember, TURN_DURATION, type MeetingRoom } from "../lib/meeting.ts";
-import { emptySymbol, completeSymbol, refillSymbols, initializeWorkshop, isContentEdit, TURN_HINT } from "../lib/workshop.ts";
+  meetingView, moveMeeting, disconnectMeetingMember, reconcileMeeting, TURN_DURATION, type MeetingRoom } from "../lib/meeting.ts";
+import { awardFloorSymbols, emptySymbol, completeSymbol, refillSymbols, initializeWorkshop, isContentEdit, TURN_HINT } from "../lib/workshop.ts";
 import { TURN_TILE_HINT } from "../lib/turn-tiles.ts";
 import { validateWorld, type World, type Asset } from "../lib/world.ts";
 import { deriveStructures } from "../lib/terrain.ts";
@@ -319,6 +319,8 @@ test("a connected pair stays free on reconnect while other and newly matched pai
   disconnectMeetingMember(room,"b",cd.endsAt+4);
   addMeetingMember(room,"e",cd.endsAt+5);
   publishMeeting(room,"e",room.members.get("e")!.document,[],false,true,cd.endsAt+5);
+  assert.equal(meetingTurn(room,"a",now),undefined);
+  reconcileMeeting(room,cd.endsAt+4+60_000);
   assert.equal(meetingTurn(room,"a",now)!.partner,"e");
   assert.equal(meetingTurn(room,"e",now)!.owner,"a");
   assert.deepEqual(meetingView(room,"e").materials,[]);
@@ -371,9 +373,10 @@ test("losing a partner stops turns and sharing, and a new partner waits for the 
   addMeetingMember(room,"c",now+TURN_DURATION+3);
   publishMeeting(room,"c",room.members.get("c")!.document,[],false,true,now+TURN_DURATION+3);
   assert.deepEqual(meetingView(room,"c").materials,[]);
+  reconcileMeeting(room,now+2*TURN_DURATION+1);
   advanceMeetingTurns(room,meetingTurn(room,"a",now)!.endsAt);
   assert.deepEqual(meetingView(room,"c").materials.map(a=>a.text),["made while alone"]);
-  assert.deepEqual(meetingView(room,"b").materials.map(a=>a.text),["old paired version"]);
+  assert.equal(room.members.has("b"),false);
 });
 
 test("successive prompt completions can be published together without allowing forged prompts",()=>{
@@ -434,4 +437,72 @@ test("content validation leaves the original world and refill queue untouched",(
   const invalid=structuredClone(after);invalid.objects[0].z--;
   assert.equal(isContentEdit(before,invalid),false);
   assert.deepEqual(before,snapshot);
+});
+
+test("three new floors and first access to an original island grant two independent symbols, only once", () => {
+  const world = createMeetingWorld(19), row = world.start.z * world.size;
+  const tiles = world.terrain!.tiles;
+  for (const tile of tiles) tile.void = true;
+  for (const i of [row+5,row+6,row-12+5,row+10,row+11,row-12+11,row-24+11,row-36+11]) tiles[i].void = false;
+  delete world.workshop!.growth;
+  initializeWorkshop(world);
+  const edit = (w: World, cells: number[], remove = false) => {
+    const next = structuredClone(w);
+    for (const i of cells) next.terrain!.tiles[i].void = remove;
+    awardFloorSymbols(w,next);
+    refillSymbols(next);
+    return next;
+  };
+  const rewards = (w: World) => w.assets.filter(a => a.prompt?.reward);
+  const two = edit(world,[row+7,row+8]);
+  assert.equal(rewards(two).length,0);
+  const both = edit(two,[row+9]);
+  assert.equal(rewards(both).length,2);
+  assert.equal(both.workshop!.growth!.islands.length,0);
+  assert.deepEqual(edit(world,[row+7,row+8,row+9]),both);
+  const restored = initializeWorkshop(validateWorld(JSON.parse(JSON.stringify(both))));
+  assert.deepEqual(rewards(restored),rewards(both));
+  const rebuilt = edit(edit(restored,[row+9],true),[row+9]);
+  assert.deepEqual(rewards(rebuilt),rewards(both));
+  assert.equal(rebuilt.workshop!.growth!.remainder,0);
+  const completed = structuredClone(rebuilt);
+  fill(completed,rewards(completed)[0]);
+  assert.ok(isContentEdit(rebuilt,completed));
+  assert.equal(rewards(completed).length,2);
+});
+
+test("a diagonal touch and a disconnected path give no island bonus; earned symbols wait for room", () => {
+  const w = createMeetingWorld(9), row = w.start.z * 12;
+  for (const tile of w.terrain!.tiles) tile.void = true;
+  for (const i of [row+6,row+5,row-12+5,row-12+9]) w.terrain!.tiles[i].void = false;
+  delete w.workshop!.growth;
+  initializeWorkshop(w);
+  const next = structuredClone(w);
+  for (const i of [row+7,row+8,row-12+10]) next.terrain!.tiles[i].void = false;
+  awardFloorSymbols(w,next);
+  assert.equal(next.workshop!.growth!.islands.length,1);
+  assert.equal(next.workshop!.growth!.pending.length,1);
+  for (let i=0;i<5;i++) next.assets.push({...next.assets[0],id:"full-"+i,text:"완성"});
+  refillSymbols(next);
+  assert.equal(next.workshop!.growth!.pending.length,1);
+  next.assets.pop();
+  refillSymbols(next);
+  assert.equal(next.workshop!.growth!.pending.length,0);
+  assert.equal(next.assets.filter(a=>a.prompt?.reward).length,1);
+});
+
+test("earned floor bonuses survive the six-material limit and file round trips", () => {
+  const world = createMeetingWorld(5), tiles = world.terrain!.tiles;
+  for (const tile of tiles) tile.void = true;
+  for (const cell of [113,125,126]) tiles[cell].void = false;
+  delete world.workshop!.growth;
+  initializeWorkshop(world);
+  const next = structuredClone(world);
+  for (const tile of next.terrain!.tiles) tile.void = false;
+  awardFloorSymbols(world,next);
+  refillSymbols(next);
+  const granted = next.assets.filter(a=>a.prompt?.reward).length;
+  assert.equal(granted,5);
+  assert.equal(next.workshop!.growth!.pending.length,47-granted);
+  assert.deepEqual(validateWorld(JSON.parse(JSON.stringify(next))).workshop,next.workshop);
 });

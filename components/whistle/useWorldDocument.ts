@@ -8,7 +8,7 @@ import { createWorldDeriver, samePlacement } from "@/lib/world-derivation";
 import { placementChanges, type PlacementFeedback } from "@/lib/placement-feedback";
 import { withSymbolColors } from "@/lib/symbol-color";
 import { contentKind, MAX_CONTENT_COUNT, mergeReceivedAssets } from "@/lib/content-limits";
-import { refillSymbols } from "@/lib/workshop";
+import { awardFloorSymbols, refillSymbols, syncGateSymbol } from "@/lib/workshop";
 import { TURN_TILE_LIMIT, type TurnTiles } from "@/lib/turn-tiles";
 
 function copyDocument(world: World): World {
@@ -134,6 +134,7 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
         next.terrain.tiles[i] = editTile(next.terrain.tiles[i], terrainTool, surface);
       }
     }
+    if (layer === "tiles") awardFloorSymbols(strokeBase.current!, next);
     if (layer === "symbols") {
       const asset = next.assets.find(asset => asset.id === assetId)!;
       const structures = deriveWorld(strokeBase.current!).structures;
@@ -183,13 +184,18 @@ export function useWorldDocument(initialWorld: World, onChange: (world: World) =
     return result.accepted;
   }, [applyWorld]);
 
-  const syncConnectionFootings = useCallback((footings: ConnectionFooting[] = []) => {
-    if (JSON.stringify(worldRef.current.connectionFootings ?? []) === JSON.stringify(footings)) return;
-    const sync = (w: World): World => ({ ...w, connectionFootings: footings.map(p => ({ ...p })) });
+  const syncConnectionFootings = useCallback((footings: ConnectionFooting[] = [], source?: World) => {
+    const sync = (w: World): World => {
+      const next = source ? syncGateSymbol(w,source) : w;
+      if (JSON.stringify(next.connectionFootings ?? []) === JSON.stringify(footings)) return next;
+      return {...next, connectionFootings:footings.map(p => ({...p}))};
+    };
+    const current = sync(worldRef.current);
+    if (current === worldRef.current) return;
     history.current = history.current.map(sync);
     future.current = future.current.map(sync);
     if (strokeBase.current) strokeBase.current = sync(strokeBase.current);
-    applyWorld(sync(worldRef.current));
+    applyWorld(current);
   }, [applyWorld]);
 
   return {

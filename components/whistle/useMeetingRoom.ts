@@ -133,10 +133,19 @@ export function useMeetingRoom(key: string) {
   },[key,send,enabled,peerTrail]);
   const setMultiplayer = useCallback((next:boolean, world:World) => {
     if (next === enabled) return;
-    if (!next) restart({...world,connectionFootings:[]});
+    if (!next) {
+      const ws = socket.current;
+      socket.current = null;
+      ws?.close();
+      online.current = false;
+      peerTrail.clear();
+      setView(localMeetingView(session.id, world));
+      setPresence({peers:[],canWhistle:false});
+      setError("");
+    }
     setEnabled(next);
     setStatus(next ? "connecting" : "offline");
-  }, [enabled,restart]);
+  }, [enabled,session.id,peerTrail]);
   const position = useCallback((player: MeetingPosition, playing: boolean) => {
     lastPosition.current=player;
     if(!online.current)setView(current=>retireOfflineMeetingFootings(current,player));

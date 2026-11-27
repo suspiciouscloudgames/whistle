@@ -54,6 +54,7 @@ test("multiplayer is the default and toggles participation without losing the wo
   await expect(a.locator('[data-connection-online="true"]')).toHaveCount(1);
   await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.some(p=>p.built)).toBe(true);
   await a.screenshot({path:info.outputPath("multiplayer-desktop.png")});
+  const identityBefore = state.view().id, partnerBefore = state.view().recipients[0];
   const before=await savedWorld(a);
   expect(before.assets.find(asset=>asset.text==="혼자 만든 재료")).toEqual(original.assets.find(asset=>asset.text==="혼자 만든 재료"));
   await toggle.focus();await a.keyboard.press("Space");
@@ -71,6 +72,8 @@ test("multiplayer is the default and toggles participation without losing the wo
   await expect(a.locator(".presence-number")).toHaveText("2");
   await expect.poll(()=>state.view().ownWorld.assets.some(asset=>asset.text==="혼자 수정한 재료")).toBe(true);
   await expect.poll(async()=>(await savedWorld(a)).connectionFootings?.length).toBe(1);
+  expect(state.view().id).toBe(identityBefore);
+  expect(state.view().recipients).toEqual([partnerBefore]);
   await a.reload();await ready(a);
   await expect(toggle).toHaveAttribute("aria-pressed","true");
   await expect(a.getByRole("button",{name:"배치: 혼자 수정한 재료",exact:true})).toBeVisible();
@@ -337,6 +340,8 @@ test("distant personal footings reveal worlds and return visitors silently after
   await a.reload();await ready(a);expect(aa.view().connections[0].id).toBe(gate.id);
   await play(a);await walk(a,19,gate.z);await walk(a,24,gate.z);await walk(a,25,gate.z);
   await expect.poll(()=>aa.view().joined.length).toBe(2);expect(bb.view().joined).toHaveLength(1);
+  await expect.poll(async()=>(await savedWorld(a)).workshop?.lastGate).toBe(gate.id);
+  expect((await savedWorld(a)).objects.filter(o=>o.x===11&&o.z===gate.z)).toHaveLength(1);
   await a.keyboard.down("KeyW");await a.waitForTimeout(600);await a.keyboard.up("KeyW");
   expect(Number(await a.locator('.play-shell canvas').getAttribute('data-player-x'))).toBeLessThan(25.6);
   await paint(b,roadB);await expect.poll(()=>aa.view().world.terrain!.tiles[gate.z*38+26].void).not.toBe(true);

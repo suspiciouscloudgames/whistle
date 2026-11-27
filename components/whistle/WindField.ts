@@ -80,7 +80,9 @@ export function makeWindField(world: World, structures: Structure[], environment
       addNeutralGrain(material, "grass", world.terrain?.seed ?? 0);
       projectSurfaceImage(material, new THREE.Vector3(actor.x * 2 - world.size + 1, 0, actor.z * 2 - world.size + 1), 1.5 * actor.scale, actor.rotation);
       material.userData.surfaceProjection.edgeFade.value=asset.text?0:.18;
-      const mesh = new THREE.InstancedMesh(grass.geometry.clone(), material, indices.length);
+      const geometry = grass.geometry.clone();
+      geometry.setDrawRange(0, Infinity);
+      const mesh = new THREE.InstancedMesh(geometry, material, indices.length);
       mesh.name = "grass-surface-image";
       mesh.userData.placementId = actor.id;
       mesh.receiveShadow = true;
@@ -93,5 +95,11 @@ export function makeWindField(world: World, structures: Structure[], environment
     assign(grass, bare, true);
     return applied;
   };
-  return { group, wind, setSurfaceImages };
+  const setGrassDetail = (fraction: number) => {
+    // Keep every tuft in place. Draw fewer blades when adaptive resolution drops.
+    const indicesPerBlade = grass.geometry.index!.count / 16;
+    if (fraction >= 1) grass.geometry.setDrawRange(0, Infinity);
+    else grass.geometry.setDrawRange(2 * indicesPerBlade, (fraction <= .5 ? 4 : 8) * indicesPerBlade);
+  };
+  return { group, wind, setSurfaceImages, setGrassDetail };
 }

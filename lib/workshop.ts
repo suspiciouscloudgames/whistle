@@ -1,5 +1,5 @@
 import { uid, type Asset, type World } from "./world.ts";
-import { contentKind, MAX_LIBRARY_SIZE, type ContentKind } from "./content-limits.ts";
+import { contentKind, MAX_LIBRARY_SIZE, MAX_CONTENT_COUNT, type ContentKind } from "./content-limits.ts";
 import { isGap } from "./tile.ts";
 
 export const WORKSHOP_MATERIAL_LIMIT = 6;
@@ -16,7 +16,7 @@ export function emptySymbol(asset?: Asset) {
 function limitEmptySymbols(world: World) {
   const state = world.workshop;
   if (!state) return false;
-  const empty = world.assets.filter(emptySymbol);
+  const empty = world.assets.filter(a => emptySymbol(a) && !a.prompt?.reward);
   const keep = empty.find(a => a.prompt?.title) ?? empty.find(a => world.objects.some(o => o.asset === a.id)) ?? empty[0];
   if (keep) {
     const removed = new Set(empty.filter(a => a.id !== keep.id).map(a => a.id));
@@ -37,13 +37,12 @@ function limitEmptySymbols(world: World) {
   return false;
 }
 
-export function refillSymbols(world: World) {
-  const state = world.workshop;
-  if (!state || limitEmptySymbols(world)) return;
+type PromptSite = NonNullable<World["workshop"]>["pending"][number] & {reward?:true};
+
+function placePrompt(world: World, pending: PromptSite, waiting?: Asset) {
+  const state = world.workshop!;
   const authored = world.assets.filter(a => !a.received && (contentKind(a) || emptySymbol(a))).length;
-  const waiting = world.assets.find(emptySymbol);
-  const pending = state.pending[0];
-  if (!pending || (!waiting && (authored >= WORKSHOP_MATERIAL_LIMIT || world.assets.length >= MAX_LIBRARY_SIZE)) || world.objects.length >= 250) return;
+  if ((!waiting && (authored >= WORKSHOP_MATERIAL_LIMIT || world.assets.length >= MAX_LIBRARY_SIZE)) || world.objects.length >= 250) return false;
   const distanceSquared = (a: { x: number; z: number }, b: { x: number; z: number }) => (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
   const floors = Array.from({ length: world.size ** 2 }, (_, i) => ({ x: i % world.size, z: Math.floor(i / world.size) }))
     .filter(p => world.terrain?.tiles[p.z * world.size + p.x] && !isGap(world.terrain.tiles[p.z * world.size + p.x]) &&
@@ -51,18 +50,128 @@ export function refillSymbols(world: World) {
     .sort((a, b) => distanceSquared(a, pending) - distanceSquared(b, pending) || a.z - b.z || a.x - b.x);
   const findFloor = (distance: number) => floors.find(p => world.objects.every(o => distanceSquared(p, o) >= distance ** 2));
   const nearest = findFloor(PREFERRED_SYMBOL_DISTANCE) ?? findFloor(MIN_SYMBOL_DISTANCE);
-  if (!nearest) return;
+  if (!nearest) return false;
   let id = waiting?.id;
   if (!id) {
     do { id = `workshop-${state.id}-${++state.serial}`; } while (world.assets.some(a => a.id === id) || world.objects.some(o => o.id === `${id}-site`));
     world.assets.push({ id, name: pending.title ? "장면 제목" : names[pending.kind], shape: pending.kind === "text" ? "cone" : "sphere",
-      color: "#777777", solid: false, prompt: { kind: pending.kind, ...(pending.title ? { title: true } : {}) } });
+      color: "#777777", solid: false, prompt: { kind: pending.kind, ...(pending.title ? { title: true } : {}), ...(pending.reward ? {reward:true} : {}) } });
   }
   const { x, z } = nearest;
   const siteId = world.objects.some(o => o.id === `${id}-site`) ? uid() : `${id}-site`;
   world.objects.push({ id: siteId, asset: id, x, z, rotation: 0, scale: 1 });
-  state.pending = [];
-  state.next = (kinds.indexOf(pending.kind) + 1) % kinds.length;
+  return true;
+}
+
+export function refillSymbols(world: World) {
+  const state = world.workshop;
+  if (!state) return;
+  if (!limitEmptySymbols(world) && state.pending.length) {
+    const pending = state.pending[0];
+    if (placePrompt(world,pending,world.assets.find(a => emptySymbol(a) && !a.prompt?.reward))) {
+      state.pending = [];
+      state.next = (kinds.indexOf(pending.kind) + 1) % kinds.length;
+    }
+  }
+  const rewards = state.growth?.pending;
+  while (rewards?.length) {
+    const cell = rewards[0];
+    if (!placePrompt(world, {kind:kinds[state.serial % kinds.length], x:cell % world.size, z:Math.floor(cell / world.size), reward:true})) break;
+    rewards.shift();
+  }
+}
+
+function connectedFloor(size: number, floors: Set<number>, start: number) {
+  const visited = new Set<number>();
+  if (!floors.has(start)) return visited;
+  const queue = [start];
+  visited.add(start);
+  for (let i=0; i<queue.length; i++) {
+    const cell = queue[i], x = cell % size;
+    for (const next of [x > 0 ? cell-1 : -1, x+1 < size ? cell+1 : -1, cell-size, cell+size]) {
+      if (!floors.has(next) || visited.has(next)) continue;
+      visited.add(next);
+      queue.push(next);
+    }
+  }
+  return visited;
+}
+
+function initialGrowth(world: World) {
+  const start = world.start.z * world.size + world.start.x;
+  const floors = new Set(world.terrain?.tiles.flatMap((tile,i) => isGap(tile) ? [] : [i]) ?? []);
+  const seen = [...floors];
+  for (const cell of connectedFloor(world.size,floors,start)) floors.delete(cell);
+  const islands: number[][] = [];
+  while (floors.size) {
+    const island = connectedFloor(world.size,floors,floors.values().next().value!);
+    islands.push([...island]);
+    for (const cell of island) floors.delete(cell);
+  }
+  return {seen,islands,remainder:0,pending:[] as number[]};
+}
+
+export function awardFloorSymbols(before: World, world: World) {
+  const state = world.workshop, tiles = world.terrain?.tiles, previous = before.terrain?.tiles;
+  if (!state || !tiles || !previous) return;
+  const added = tiles.flatMap((tile,i) => !isGap(tile) && isGap(previous[i]) ? [i] : []);
+  if (!added.length) return;
+  const start = world.start.z * world.size + world.start.x;
+  const growth = state.growth ??= initialGrowth(before);
+  const seen = new Set(growth.seen);
+  for (const cell of added) {
+    if (seen.has(cell)) continue;
+    growth.seen.push(cell);
+    growth.remainder++;
+    if (growth.remainder === 3) {
+      growth.remainder = 0;
+      growth.pending.push(cell);
+    }
+  }
+  const floors = new Set(tiles.flatMap((tile,i) => isGap(tile) ? [] : [i]));
+  const reachable = connectedFloor(world.size,floors,start);
+  growth.islands = growth.islands.filter(island => {
+    const reached = island.find(cell => reachable.has(cell));
+    if (reached === undefined) return true;
+    growth.pending.push(reached);
+    return false;
+  });
+}
+
+export function gateSymbol(world: World, gate: string, x: number, z: number, awarded?: Asset): World {
+  const state = world.workshop;
+  if (!state || state.lastGate === gate) return world;
+  const next = {...world, workshop: {...state, lastGate: gate}};
+  const tile = world.terrain?.tiles[z * world.size + x];
+  const siteId = `${gate}-bonus`;
+  if (!tile || isGap(tile) || world.objects.length >= 250 || world.objects.some(o => o.id === siteId || (o.x === x && o.z === z))) return next;
+
+  const authored = world.assets.filter(a => !a.received && (emptySymbol(a) || contentKind(a)));
+  const kind = kinds[state.serial % kinds.length];
+  const id = awarded?.id ?? `bonus-${gate}`;
+  let asset = world.assets.find(a => a.id === id);
+  if (!asset && authored.length < WORKSHOP_MATERIAL_LIMIT && world.assets.length < MAX_LIBRARY_SIZE) {
+    asset = awarded ?? {id, name:names[kind], shape:kind === "text" ? "cone" : "sphere",
+      color:"#777777", solid:false, prompt:{kind, reward:true}};
+    next.assets = [...world.assets,asset];
+  }
+  if (!asset) {
+    const kindsById = new Map(world.assets.map(a => [a.id,contentKind(a)]));
+    asset = authored.find(a => emptySymbol(a) && !a.prompt?.title) ?? authored.find(a => {
+      const type = contentKind(a);
+      return type && !a.prompt?.title && world.objects.filter(o => kindsById.get(o.asset) === type).length < MAX_CONTENT_COUNT;
+    });
+  }
+  if (asset) next.objects = [...world.objects,{id:siteId, asset:asset.id, x, z, rotation:0, scale:1}];
+  return next;
+}
+
+export function syncGateSymbol(world: World, source: World): World {
+  const gate = source.workshop?.lastGate;
+  if (!gate || !world.workshop || world.workshop.id !== source.workshop?.id || world.workshop.lastGate === gate) return world;
+  const placed = source.objects.find(o => o.id === `${gate}-bonus`);
+  if (placed) return gateSymbol(world,gate,placed.x,placed.z,source.assets.find(a => a.id === placed.asset));
+  return {...world,workshop:{...world.workshop,lastGate:gate}};
 }
 
 export function initializeWorkshop(world: World) {
@@ -70,6 +179,7 @@ export function initializeWorkshop(world: World) {
     world.workshop = { id: uid(), serial: 0, next: 0, pending: [{ kind: "text", title: true,
       x: Math.max(0, world.start.x - 1), z: Math.max(0, world.start.z - 1) }] };
   }
+  world.workshop.growth ??= initialGrowth(world);
   refillSymbols(world);
   return world;
 }
@@ -77,7 +187,7 @@ export function initializeWorkshop(world: World) {
 export function completeSymbol(world: World, previous: Asset, objectId?: string) {
   const current = world.assets.find(a => a.id === previous.id);
   if (previous.prompt?.title && current?.text?.trim()) world.title = current.text.trim().slice(0, 60);
-  if (!world.workshop || !emptySymbol(previous) || !contentKind(current)) return;
+  if (!world.workshop || !emptySymbol(previous) || previous.prompt?.reward || !contentKind(current)) return;
   const place = world.objects.find(o => o.id === objectId && o.asset === previous.id) ?? world.objects.find(o => o.asset === previous.id);
   const point = place ?? world.start;
   const kind = kinds[(kinds.indexOf(previous.prompt!.kind) + 1) % kinds.length];
@@ -91,6 +201,7 @@ export function isContentEdit(before: World, after: World) {
       JSON.stringify([after.size, after.start, after.terrain])) return false;
   const expected: World = { ...before, assets: [...before.assets], objects: [...before.objects],
     ...(before.workshop ? { workshop: structuredClone(before.workshop) } : {}) };
+  if (expected.workshop && !expected.workshop.growth && after.workshop?.growth) expected.workshop.growth = initialGrowth(before);
   limitEmptySymbols(expected);
   const originalAssets = expected.assets;
   expected.assets = after.assets.filter(a => originalAssets.some(b => b.id === a.id) || a.received).map(a => ({ ...a }));

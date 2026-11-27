@@ -48,7 +48,7 @@ async function open(page: Page, timeOfDay: TimeOfDay = "midnight", weather: Weat
 const frame = (page: Page) => page.evaluate(() => (globalThis as any).__meteorFrame as {elapsed: number | null; count: number; showers: number});
 const meteorMessages = (page: Page) => pdMessages(page, "whistle-event fallingstar");
 
-for (const kind of ["text", "image"] as const) test(`walking past authored ${kind} reveals, fades after crossing and reappears on return`, async ({ page }) => {
+for (const kind of ["text", "image"] as const) test(`walking past authored ${kind} reveals at a distance, fades before crossing and reappears on return`, async ({ page }) => {
   const world = createMeetingWorld(17);
   world.terrain = flatTerrain(world.size);
   const title = world.assets.find(a => a.prompt?.title)!;
@@ -66,7 +66,7 @@ for (const kind of ["text", "image"] as const) test(`walking past authored ${kin
     });
   }
   const first = world.objects.find(o => o.asset === title.id)!;
-  Object.assign(first, { id: "pass-first", x: world.start.x, z: world.start.z - 2 });
+  Object.assign(first, { id: "pass-first", x: world.start.x, z: world.start.z - 5 });
   world.objects.push({ ...first, id: "pass-copy", x: world.start.x + 2 });
   world.assets.push({ ...title, id: "fixed-art", prompt: undefined, placement: kind === "text" ? "surface" : "field" });
   world.objects.push({ ...first, id: "attached-copy", asset: "fixed-art", x: world.start.x + 1 });
@@ -93,22 +93,20 @@ for (const kind of ["text", "image"] as const) test(`walking past authored ${kin
     try { await expect.poll(arrived, { timeout: 15000, intervals: [50] }).toBe(true); }
     finally { await page.keyboard.up(key); }
   };
-  await moveUntil("w", async () => await playerZ() < first.z + .4);
+  await moveUntil("w", async () => await playerZ() < first.z + 1.45);
   expect((await frame(page)).count).toBe(0);
-  expect(await opacity("pass-first")).toBe(1);
+  await expect.poll(async () => (await opacity("pass-first")) ?? 1).toBeLessThan(.98);
+  expect(await playerZ()).toBeGreaterThan(first.z);
   await moveUntil("w", async () => (await frame(page)).count > 0);
   expect((await frame(page)).showers).toBe(1);
   expect((await frame(page)).count).toBeLessThanOrEqual(3);
   await expect.poll(async () => (await meteorMessages(page)).at(-1)).toEqual([1]);
-  await expect.poll(async () => {
-    const alpha = await opacity("pass-first");
-    return alpha !== undefined && alpha > 0 && alpha < .98;
-  }).toBe(true);
   await expect.poll(() => opacity("pass-first")).toBe(0);
   if (initialPose) expect(await textPose()).toEqual(initialPose);
   expect(await attachedOpacity()).toBe(1);
   expect(await opacity("pass-copy")).toBe(1);
   await moveUntil("w", async () => await playerZ() < first.z - 4.5);
+  await expect.poll(async () => (await frame(page)).elapsed, {timeout: 16_000}).toBeNull();
   expect(await attachedOpacity()).toBe(1);
   await moveUntil("s", async () => await playerZ() > first.z - 2.7);
   await expect.poll(() => opacity("pass-first")).toBe(1);

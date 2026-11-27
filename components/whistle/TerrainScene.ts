@@ -265,6 +265,7 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
   return {
     group,
     environment,
+    setGrassDetail: paperField.setGrassDetail,
     setSurfaceImages: (actors: Actor[], assets: Asset[]) => {
       const treeImages = generated.setSurfaceImages(actors, assets);
       const rest = actors.filter(actor => !treeImages.has(actor.id));

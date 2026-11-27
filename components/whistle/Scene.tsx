@@ -417,6 +417,7 @@ export default function Scene({
         scene.remove(terrain.group);
         disposeGroup(terrain.group);
         terrain = makeTerrain(worldRef.current, structures, nextDerivation.environment, terrainCache);
+        terrain.setGrassDetail?.(renderer.getPixelRatio() / quality.pixelRatio);
         terrain.group.getObjectByName("terrain-bank")!.visible = mode === "play";
         applyPixelMaterials(terrain.group, graphicsDaylight, worldRef.current.terrain?.floating);
         softenEdges(terrain.group, world.size);
@@ -634,6 +635,7 @@ export default function Scene({
       const ratio = resolution?.sample(elapsed);
       if (ratio !== undefined && ratio !== renderer.getPixelRatio()) {
         renderer.setPixelRatio(ratio);
+        terrain.setGrassDetail?.(ratio / quality.pixelRatio);
         resize();
       }
 

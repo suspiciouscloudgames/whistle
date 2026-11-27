@@ -243,9 +243,10 @@ test("the countdown stays above the map and advances without repeatedly renderin
       const label = await page.locator(".turn-label").boundingBox();
       const bar = await page.getByRole("progressbar", {name:"차례 남은 시간"}).boundingBox();
       const map = await page.locator(".world-grid").boundingBox();
-      expect(label!.y + label!.height).toBeLessThanOrEqual(bar!.y);
-      expect(bar!.y + bar!.height).toBeLessThanOrEqual(map!.y);
-      expect(map!.y - (bar!.y + bar!.height)).toBeLessThanOrEqual(4);
+      const labelGap = bar!.y - (label!.y + label!.height);
+      const mapGap = map!.y - (bar!.y + bar!.height);
+      expect(labelGap).toBeCloseTo(4, 1);
+      expect(mapGap).toBeCloseTo(labelGap, 1);
       expect(bar!.width).toBeCloseTo(map!.width, 0);
     }
     await a.waitForTimeout(1200);
@@ -349,4 +350,27 @@ test("the third player creates alone until a fourth arrives, shares only with th
     await expect(c.locator('.turn-status')).toHaveCount(0);
     expect(states.flatMap(state=>state.errors)).toEqual([]);
   } finally {await Promise.all(contexts.map(context=>context.close()));}
+});
+
+test("the third floor reaching an island awards two symbols and keeps both after undo, redo and reload", async ({page}) => {
+  const w = createMeetingWorld(41);
+  for (const tile of w.terrain!.tiles) tile.void = true;
+  for (const cell of [125,126,113,130,131,119,107,95]) w.terrain!.tiles[cell].void = false;
+  delete w.workshop!.growth;
+  await page.addInitScript(w => localStorage.setItem("whistle.world.v2",JSON.stringify(w)),w);
+  await page.goto(`?meeting=island-reward-${Date.now()}`);
+  await ready(page);
+  const symbols=page.locator('[data-empty-symbol="true"]');
+  await page.getByRole("button",{name:"바닥",exact:true}).click();
+  for (const cell of [127,128]) await page.locator(`[data-cell="${cell}"]`).click();
+  await expect(symbols).toHaveCount(1);
+  await page.locator('[data-cell="129"]').click();
+  await expect(symbols).toHaveCount(3);
+  await page.getByRole("button",{name:"되돌리기",exact:true}).click();
+  await expect(symbols).toHaveCount(1);
+  await page.getByRole("button",{name:"다시 실행",exact:true}).click();
+  await expect(symbols).toHaveCount(3);
+  await expect.poll(async()=> (await savedWorld(page)).assets.filter(a=>a.prompt?.reward).length).toBe(2);
+  await page.reload();
+  await expect(symbols).toHaveCount(3);
 });

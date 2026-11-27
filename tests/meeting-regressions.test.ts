@@ -240,6 +240,7 @@ test("relay reclaims overlapping sessions and forgets worlds after idle eviction
   assert.equal(replacement.initial.view.id,"bbbbbbbb");assert.equal(replacement.initial.presence.peers.length,3);
   assert.ok(replacement.initial.presence.peers.find(p=>p.id==="bbbbbbbb")!.online);
   clients.forEach(c=>c.close());await new Promise(r=>setTimeout(r,80));
+  now+=60_001;await new Promise(r=>setTimeout(r,30));
   const evicted=await connect("aaaaaaaa");assert.notDeepEqual(evicted.initial.view.ownWorld,own);
   await running.close();running=await start();
   const restarted=await connect("bbbbbbbb");
@@ -254,6 +255,93 @@ test("relay reclaims overlapping sessions and forgets worlds after idle eviction
   assert.equal(restarted.initial.view.slot,0);
 });
 
+
+test("ten simultaneous workshop connections keep five pairs through toggles and a room-wide outage", async t => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  const server = createServer(), relay = attachMeetingRelay(server, {cleanupMs: 10});
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as {port:number}).port;
+  const sockets: WebSocket[] = [];
+  t.after(async () => {
+    sockets.forEach(socket => socket.terminate());
+    await relay.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+  const until = async (predicate: () => boolean) => {
+    for (let i=0; i<500; i++) {
+      if (predicate()) return;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.fail("Workshop state did not converge");
+  };
+  const connect = async (id: string) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/whistle/meeting?room=workshop&id=${id}&token=${id}-private-session`);
+    sockets.push(socket);
+    const codec = createMeetingCodec();
+    const client = {id, socket, states:0, partner:"", owner:"", end:0, count:0, title:"", ready:false,
+      publish: (world: ReturnType<typeof meetingWorld>) => {
+        for (const frame of codec.encode({type:"publish",world})) socket.send(frame);
+      }};
+    let published = false;
+    socket.on("message", data => {
+      const message = codec.decode<MeetingMessage>(data.toString());
+      if (message?.type !== "state" && message?.type !== "presence") return;
+      client.count = message.presence.onlineCount!;
+      client.owner = message.presence.turn?.owner ?? "";
+      client.end = message.presence.turn?.endsAt ?? 0;
+      if (message.type === "state") {
+        client.states++;
+        client.partner = message.view.recipients[0] ?? "";
+        client.title = message.view.ownWorld.title;
+        client.ready = message.view.documentReady;
+        if (!published) {
+          published = true;
+          client.publish({...message.view.ownWorld, title:id});
+        }
+      }
+    });
+    await once(socket, "open");
+    return client;
+  };
+  const ids = Array.from({length:10}, (_,i) => `player-0${i}`);
+  let clients = await Promise.all(ids.map(connect));
+  const paired = () => clients.every(c => c.ready && c.count === 10 && clients.some(p => p.id === c.partner && p.partner === c.id && p !== c));
+  await until(paired);
+  const original = new Map(clients.map(c => [c.id,{partner:c.partner, owner:c.owner, end:c.end}]));
+  assert.equal(new Set(clients.map(c=>[c.id,c.partner].sort().join("/"))).size,5);
+  const released = clients[0], other = clients.find(c=>c.id!==released.id && c.partner!==released.id)!;
+  const survivor = clients.find(c=>c.id===released.partner)!;
+  const otherStates = other.states;
+  now += 5000;
+  released.socket.terminate();
+  await until(()=>survivor.count===9 && survivor.partner==="");
+  const visitor = await connect("late-visitor");
+  await until(()=>visitor.ready && survivor.count===10);
+  assert.equal(visitor.partner,"");
+  now += 7000;
+  clients[0] = await connect(released.id);
+  await until(()=>clients[0].ready && clients[0].partner===survivor.id && survivor.count===11);
+  assert.equal(survivor.owner,original.get(survivor.id)!.owner);
+  assert.equal(survivor.end,original.get(survivor.id)!.end+7000);
+  assert.equal(other.end,original.get(other.id)!.end);
+  assert.equal(other.states,otherStates);
+  visitor.socket.terminate();
+  await until(paired);
+  await Promise.all(clients.map(async c => {const closed=once(c.socket,"close");c.socket.terminate();await closed;}));
+  now += 3000;
+  clients = await Promise.all([...ids].reverse().map(connect));
+  await until(paired);
+  for (const c of clients) {
+    assert.equal(c.title,c.id);
+    assert.equal(c.partner,original.get(c.id)!.partner);
+    assert.equal(c.owner,original.get(c.id)!.owner);
+  }
+  now += TURN_DURATION;
+  await until(()=>clients.every(c=>c.owner!==original.get(c.id)!.owner));
+  assert.ok(paired());
+});
 
 test("a gift arriving during a local edit cannot overflow the library or replace an edited gift",async()=>{
   const {mergeReceivedAssets}=await import("../lib/content-limits.ts");

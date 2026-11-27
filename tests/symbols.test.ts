@@ -240,7 +240,7 @@ test("surface fading changes the coating and decal while leaving terrain geometr
   decal.geometry.dispose(); decal.material.dispose(); grass.geometry.dispose(); grass.material.dispose();
 });
 
-for (const kind of ["text", "image"] as const) test(`a ${kind} coating stays readable until crossed and reappears after a distant return`, () => {
+for (const kind of ["text", "image"] as const) test(`a ${kind} coating reveals at five tiles and fades on approach before crossing`, () => {
   const world = starterWorld(), camera = new THREE.PerspectiveCamera();
   const actor = { ...createSimulation(world).actors[0], x: 3, z: 2, scale: 1 };
   const asset = { ...world.assets[0], id: actor.asset, display: "pulse" as const, text: kind === "text" ? "한 줄" : undefined, image: "fixture-image" };
@@ -258,14 +258,18 @@ for (const kind of ["text", "image"] as const) test(`a ${kind} coating stays rea
   const step = (ms: number) => {
     for (let i = 0; i < ms; i += 50) session.update(camera, world.size, time += 50, false, false);
   };
-  camera.position.set(actor.x * 2 - world.size + 1, 5, actor.z * 2 - world.size + 11);
+  camera.position.set(actor.x * 2 - world.size + 1, 5, actor.z * 2 - world.size + 16);
   step(1500);
   assert.equal(opacity.value, 0);
-  camera.position.z -= 7;
+  camera.position.z -= 5;
   step(200);
   assert.ok(opacity.value > 0 && opacity.value < 1);
   step(1600);
   assert.equal(opacity.value, 1);
+  camera.position.z -= 7;
+  assert.equal(session.passContent(3, 3.8, 3, 3.6, 4), 0);
+  step(200);
+  assert.ok(opacity.value > 0 && opacity.value < 1);
   assert.equal(session.passContent(3, 3.2, 3, 2.7, 4), 0);
   assert.equal(session.passContent(3, 2.7, 3, 1.8, 10), 0);
   assert.equal(session.passContent(3, 2.7, 3, 1.8, 4), 1);

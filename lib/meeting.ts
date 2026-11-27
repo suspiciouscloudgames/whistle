@@ -4,7 +4,7 @@ import { createTerrainWorld } from "./create-world.ts";
 import { flatTerrain, floorHeight, deriveStructures, randomSequence, type Structure, type Tile } from "./terrain.ts";
 import { isGap } from "./tile.ts";
 import { PLAYER_FOOTPRINT_RADIUS } from "./navigation.ts";
-import { initializeWorkshop, isContentEdit, TURN_HINT } from "./workshop.ts";
+import { gateSymbol, syncGateSymbol, initializeWorkshop, isContentEdit, TURN_HINT } from "./workshop.ts";
 import { startTurnTiles, uncountedTiles, TURN_TILE_HINT, TURN_TILE_LIMIT, type TurnTiles } from "./turn-tiles.ts";
 
 export const LOCAL_SIZE = 12;
@@ -57,6 +57,8 @@ export type MeetingRoom = {
   members: Map<string, Member>; chain: string[]; signals: MeetingSignal[]; connections: ConnectionTile[];
   links: [viewer:string,target:string][]; revision: number; seed: number; sequence: number;
   turns: TurnPair[];
+  reconnectMs: number;
+  pausedTurns: {pair: TurnPair; pausedAt: number}[];
 };
 const emptyTile = (): Tile => ({ height: 0, surface: "plain", void: true });
 export function fixMeetingStart(world: World) {
@@ -106,8 +108,8 @@ function assignPort(room:MeetingRoom,member:Member,peer:Member,side:0|1,row:numb
 export function meetingNeighbors(room:MeetingRoom,id:string) {
   const i=room.chain.indexOf(id); return i<0?[]:[room.chain[i-1],room.chain[i+1]].filter((id):id is string=>!!id);
 }
-export function createMeetingRoom(seed=Math.floor(Math.random()*0xffffffff)):MeetingRoom {
-  return {members:new Map(),chain:[],signals:[],connections:[],links:[],revision:0,seed,sequence:0,turns:[]};
+export function createMeetingRoom(seed=Math.floor(Math.random()*0xffffffff), reconnectMs=MEETING_RECONNECT_MS):MeetingRoom {
+  return {members:new Map(),chain:[],signals:[],connections:[],links:[],revision:0,seed,sequence:0,turns:[],pausedTurns:[],reconnectMs};
 }
 function connectedPair(room: MeetingRoom, pair: TurnPair) {
   const [a,b]=pair.members;
@@ -116,11 +118,32 @@ function connectedPair(room: MeetingRoom, pair: TurnPair) {
 export function meetingPartner(room: MeetingRoom, id: string) {
   return room.turns.find(pair=>pair.members.includes(id))?.members.find(member=>member!==id);
 }
-export function advanceMeetingTurns(room: MeetingRoom, now = Date.now()) {
+export function advanceMeetingTurns(room: MeetingRoom, now = Date.now(), graceMs = room.reconnectMs) {
   const ready = room.chain.filter(id => { const m = room.members.get(id); return m?.online && m.ready; });
   const readyIds = new Set(ready);
   const turns = room.turns.filter(pair => pair.members.every(id => readyIds.has(id)));
   let changed = turns.length !== room.turns.length;
+  const reserved = new Set<string>();
+  room.pausedTurns = room.pausedTurns.filter(({pair, pausedAt}) => {
+    if (!pair.members.every(id => room.members.has(id))) return false;
+    if (now - pausedAt >= graceMs) {
+      room.links = room.links.filter(([from,to]) => !(pair.members.includes(from) && pair.members.includes(to)));
+      changed = true;
+      return false;
+    }
+    if (!pair.members.every(id => readyIds.has(id))) {
+      pair.members.forEach(id => reserved.add(id));
+      return true;
+    }
+    const pause = Math.max(0, now - pausedAt);
+    pair.startedAt += pause;
+    pair.endsAt += pause;
+    pair.tiles.existing.push(...uncountedTiles(room.members.get(pair.owner)!.document, pair.tiles));
+    turns.push(pair);
+    if (connectedPair(room,pair)) for (const id of pair.members) snapshotMaterials(room.members.get(id)!);
+    changed = true;
+    return false;
+  });
   for (const pair of turns) {
     if (connectedPair(room,pair) || now < pair.endsAt) continue;
     const elapsed = Math.floor((now - pair.endsAt) / TURN_DURATION) + 1;
@@ -136,7 +159,7 @@ export function advanceMeetingTurns(room: MeetingRoom, now = Date.now()) {
   }
   const paired = new Set(turns.flatMap(pair => pair.members));
   for (const member of room.members.values()) if (!paired.has(member.id)) member.published = [];
-  const waiting = ready.filter(id => !paired.has(id));
+  const waiting = ready.filter(id => !paired.has(id) && !reserved.has(id));
   for (let i = 0; i + 1 < waiting.length; i += 2) {
     const a = waiting[i], b = waiting[i + 1];
     const pair: TurnPair = { members: [a, b], owner: a, startedAt: now, endsAt: now + TURN_DURATION, tiles: startTurnTiles(room.members.get(a)!.document) };
@@ -206,9 +229,9 @@ function syncNeighborSlots(room:MeetingRoom) {
   if(changed){syncConnections(room);room.revision++;}
   return changed;
 }
-export function reconcileMeeting(room:MeetingRoom,now=Date.now(),graceMs=MEETING_RECONNECT_MS) {
+export function reconcileMeeting(room:MeetingRoom,now=Date.now(),graceMs=room.reconnectMs) {
   const chain=room.chain.filter(id=>{const m=room.members.get(id)!;return m.online || now-(m.leftAt??now)<graceMs;});
-  let changed=chain.length!==room.chain.length;
+  let changed = chain.length !== room.chain.length;
   if(changed){
     room.chain=chain;room.revision++;
     for(const [id,member] of room.members)if(!member.online&&!chain.includes(id)) {
@@ -217,8 +240,8 @@ export function reconcileMeeting(room:MeetingRoom,now=Date.now(),graceMs=MEETING
       room.links=room.links.filter(([from,to])=>from!==id&&to!==id);
     }
   }
+  changed=advanceMeetingTurns(room,now,graceMs)||changed;
   changed=syncNeighborSlots(room)||changed;
-  changed=advanceMeetingTurns(room,now)||changed;
   if(changed){shareMeetingMaterials(room);discoverMeetingConnections(room);}
   return changed;
 }
@@ -231,6 +254,8 @@ export function disconnectMeetingMember(room:MeetingRoom,id:string,now=Date.now(
       relocateMeeting(room,visitor,port<0?meetingGlobal(0,MEETING_START):portPoint(port,visitor.ports[port]!.row),"disconnect");
     }
   }
+  const pair = room.turns.find(pair => pair.members.includes(id));
+  if (pair) room.pausedTurns.push({pair, pausedAt: now});
   m.online=false;m.playing=false;m.leftAt=now;room.revision++;
   advanceMeetingTurns(room,now);
 }
@@ -241,7 +266,7 @@ export function leaveMeetingMember(room:MeetingRoom,id:string) {
   room.members.delete(id);
   worldCache.get(room)?.delete(id);
   room.revision++;
-  syncNeighborSlots(room);shareMeetingMaterials(room);discoverMeetingConnections(room);
+  advanceMeetingTurns(room);syncNeighborSlots(room);shareMeetingMaterials(room);discoverMeetingConnections(room);
 }
 function relocateMeeting(room:MeetingRoom,member:Member,point:{x:number;z:number},reason:MeetingReset["reason"]) {
   member.player=meetingReturnPosition(point,member.player.yaw,reason);
@@ -250,8 +275,8 @@ function relocateMeeting(room:MeetingRoom,member:Member,point:{x:number;z:number
 export function meetingReturnPosition(point:{x:number;z:number},yaw:number,reason:MeetingReset["reason"]):MeetingPosition {
   return {...point,yaw:reason==="disconnect"?(point.x<13?Math.PI/2:-Math.PI/2):yaw,pitch:-.7,grounded:true,falling:false};
 }
-export function addMeetingMember(room:MeetingRoom,id:string,now=Date.now()) {
-  reconcileMeeting(room,now);
+export function addMeetingMember(room:MeetingRoom,id:string,now=Date.now(),awaitDocument=false,graceMs=room.reconnectMs) {
+  reconcileMeeting(room,now,graceMs);
   let member=room.members.get(id);
   if(!member){
     const document=createMeetingWorld((room.seed+Math.imul(room.members.size,0x9e3779b9))>>>0);
@@ -259,6 +284,10 @@ export function addMeetingMember(room:MeetingRoom,id:string,now=Date.now()) {
       reset:{id:0,player:{...meetingGlobal(0,MEETING_START),yaw:0,grounded:true}},
       player:{...meetingGlobal(0,MEETING_START),yaw:0,grounded:true},materials:new Map(),received:new Set(),shared:new Map(),published:[],lastWhistle:-Infinity};
     room.members.set(id,member);
+  }
+  if (!member.online) {
+    if (!room.pausedTurns.some(({pair}) => pair.members.includes(id))) room.chain = room.chain.filter(peer => peer !== id);
+    if (awaitDocument) member.ready = false;
   }
   member.online=true;delete member.leftAt;
   if(!room.chain.includes(id))room.chain.push(id);
@@ -369,10 +398,10 @@ export function discoverMeetingConnections(room:MeetingRoom) {
   if(changed){syncConnections(room);room.revision++;}
 }
 export function publishMeeting(room:MeetingRoom,id:string,input:unknown,received:string[]=[],_legacyShare=false,enforceTurn=false,now=Date.now()) {
-  const world=validateWorld(input,MAX_LIBRARY_SIZE);
+  const member=room.members.get(id)!;
+  const world=syncGateSymbol(validateWorld(input,MAX_LIBRARY_SIZE),member.document);
   if(world.size!==LOCAL_SIZE)throw Error("연결된 세계에서는 12×12 맵을 사용합니다.");
   if(world.start.x!==MEETING_START.x||world.start.z!==MEETING_START.z)throw Error("연결된 세계의 출발점은 고정되어 있습니다.");
-  const member=room.members.get(id)!;
   const turnChanged=advanceMeetingTurns(room,now);
   const turn=meetingTurn(room,id,now);
   if(enforceTurn && member.ready && turn && turn.owner!==id && !isContentEdit(member.document,world)) throw Error(TURN_HINT);
@@ -454,7 +483,8 @@ function positionFor(room:MeetingRoom,source:string,viewer:string):MeetingPositi
   }
 }
 function canWhistleMeeting(room:MeetingRoom,id:string) {
-  return room.links.some(([a,b])=>(a===id&&room.members.get(b)?.online)||(b===id&&room.members.get(a)?.online));
+  const pair = room.turns.find(pair => pair.members.includes(id));
+  return !!pair && connectedPair(room,pair);
 }
 export function meetingWhistleRecipients(room:MeetingRoom,id:string) {
   return [...room.members.values()].filter(m=>m.online&&m.playing&&!!positionFor(room,id,m.id)).map(m=>m.id);
@@ -493,6 +523,8 @@ export function moveMeeting(room:MeetingRoom,id:string,player:MeetingPosition,pl
       const pair=room.turns.find(pair=>pair.members.includes(id)&&pair.members.includes(p.peer));
       const connected=pair&&connectedPair(room,pair);
       room.links.push([id,p.peer]);room.revision++;changed=true;
+      member.document = gateSymbol(member.document,p.key,i === 0 ? 0 : LOCAL_SIZE-1,p.row);
+      member.revision++;
       if(pair&&!connected){
         for(const member of pair.members)snapshotMaterials(room.members.get(member)!);
         shareMeetingMaterials(room);discoverMeetingConnections(room);
