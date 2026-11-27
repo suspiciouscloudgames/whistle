@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actor, World } from "@/lib/world";
 import type { PlacementFeedback } from "@/lib/placement-feedback";
 import type { WorldDerivation } from "@/lib/world-derivation";
@@ -37,6 +37,7 @@ type Props = {
   portals?: WorldPortal[];
   overlay?: ReactNode;
   canPlace?: boolean;
+  turnEndsAt?: number;
   onMoveSymbol?: (id: string, index: number) => void;
   turnBar?: ReactNode;
 };
@@ -46,7 +47,7 @@ export function EditorBoard({
   onPaint, onEnd, placingAsset, placingStart, onOpenSymbol, onUndo, onRedo,
   portals = [],
   overlay,
-  canPlace = true, onMoveSymbol, turnBar,
+  canPlace = true, turnEndsAt, onMoveSymbol, turnBar,
 }: Props) {
   const { t } = useLanguage();
   const { structures, environment } = derivation;
@@ -87,6 +88,8 @@ export function EditorBoard({
       <div className="canvas-area">
         <PaintGrid
           size={world.size}
+          canPlace={canPlace}
+          turnEndsAt={turnEndsAt}
           overlay={<>
             {overlay}
             <EnvironmentEffects regions={effectFeedback.markers} size={world.size} onAnimationEnd={effectFeedback.finish} />
@@ -185,7 +188,7 @@ export function EditorBoard({
                   const color = empty ? "#777777" : asset.glyphColor ?? asset.color;
                   return <SymbolMarker key={placed.id} id={placed.id} index={i} size={world.size} offset={offset} layer={layer}
                     empty={empty} kind={type} label={`${t(asset.prompt?.title ? "장면 제목" : type === "text" ? "텍스트" : type === "sound" ? "사운드" : "이미지")} ${t(empty ? "입력" : "편집")}`}
-                    canPlace={canPlace} onOpen={() => onOpenSymbol(i, placed.id)} onMove={onMoveSymbol}>
+                    canPlace={canPlace} turnEndsAt={turnEndsAt} onOpen={() => onOpenSymbol(i, placed.id)} onMove={onMoveSymbol}>
                     {type === "sound" ? <SoundGlyph color={color} filled={!empty} /> : <SiteGlyph kind={kind} filled={!empty} color={color} />}
                   </SymbolMarker>;
                 })}
@@ -210,12 +213,16 @@ export function EditorBoard({
   );
 }
 
-function SymbolMarker({ id, index, size, offset, layer, empty, kind, label, canPlace, onOpen, onMove, children }: {
+function SymbolMarker({ id, index, size, offset, layer, empty, kind, label, canPlace, turnEndsAt, onOpen, onMove, children }: {
   id: string; index: number; size: number; offset: number; layer: number; empty: boolean; kind: string; label: string;
-  canPlace: boolean; onOpen: () => void; onMove?: (id: string, index: number) => void; children: ReactNode;
+  canPlace: boolean; turnEndsAt?: number; onOpen: () => void; onMove?: (id: string, index: number) => void; children: ReactNode;
 }) {
   const gesture = useRef<{x:number;y:number;moved:boolean} | null>(null);
   const [dragging, setDragging] = useState(false);
+  useLayoutEffect(() => {
+    gesture.current = null;
+    setDragging(false);
+  }, [canPlace, turnEndsAt]);
   return <span className={`generated-site symbol-marker${empty ? " empty-symbol" : ""}${dragging ? " symbol-dragging" : ""}`}
     role="button" tabIndex={0} aria-label={label} data-symbol-site={id} data-symbol-kind={kind} data-empty-symbol={empty}
     style={{marginLeft:offset,marginTop:-offset,zIndex:5+layer}}

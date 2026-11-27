@@ -132,8 +132,12 @@ test("one-minute turns lock placement, keep editors open and deliver before meet
     await a.getByRole("button",{name:"장면 제목 편집",exact:true}).click();
     await a.getByRole("textbox",{name:"텍스트 입력",exact:true}).fill("차례가 바뀌어도 남은 초안");
     await expect(b.locator('.received-material')).toHaveCount(0);
+    await cell.hover();
+    await b.mouse.down();
     await expect(b.locator('.workspace [data-turn]')).toHaveAttribute("data-turn","own",{timeout:65_000});
+    await b.mouse.up();
     await expect(b.locator(".turn-label")).toHaveText("배치할 차례 / 남은 타일 수: 3");
+    expect((await savedWorld(b)).terrain!.tiles[0].void).toBe(true);
     await expect(a.getByRole("dialog")).toBeVisible();
     await expect(a.getByRole("textbox",{name:"텍스트 입력",exact:true})).toHaveValue("차례가 바뀌어도 남은 초안");
     await expect(a.getByRole("button",{name:"배치 삭제",exact:true})).toBeDisabled();
@@ -148,8 +152,20 @@ test("one-minute turns lock placement, keep editors open and deliver before meet
     await expect.poll(async()=>(await savedWorld(b)).terrain!.tiles[0].void).not.toBe(true);
     await a.screenshot({path:info.outputPath("other-turn.png"),fullPage:true});
     await b.screenshot({path:info.outputPath("own-turn.png"),fullPage:true});
+    const aTitle = a.getByRole("button", { name: "장면 제목 편집", exact: true });
+    const originalCell = await aTitle.evaluate(el => el.closest("[data-cell]")!.getAttribute("data-cell"));
+    const ownWorld = await savedWorld(a);
+    const destination = ownWorld.start.z * ownWorld.size + ownWorld.start.x;
+    const target = a.locator(`[data-cell="${destination}"]`);
+    await aTitle.hover();
+    await a.mouse.down();
+    await target.hover();
     await cb.close();
     await expect(a.locator('.workspace [data-turn]')).toHaveCount(0);
+    await a.mouse.up();
+    expect(await aTitle.evaluate(el => el.closest("[data-cell]")!.getAttribute("data-cell"))).toBe(originalCell);
+    await drag(a, '[data-symbol-site][aria-label="장면 제목 편집"]', destination);
+    await expect(target.getByRole("button", { name: "장면 제목 편집", exact: true })).toBeVisible();
   } finally {await ca.close();await cb.close();}
 });
 

@@ -8,7 +8,7 @@ import type { Environment } from "../../lib/environment.ts";
 type Chunk = {key:string; ground:THREE.BufferGeometry; bank:THREE.BufferGeometry};
 export const createTerrainCache = () => new Map<string,Chunk>();
 type Bounds = {x:number; z:number; length:number};
-function buildGround(world:World, environment:Environment, bounds?:Bounds) {
+function buildGround(world:World, environment:Environment, hasWaterTiles:boolean, bounds?:Bounds) {
   const group = new THREE.Group();
   const toScene = (n:number) => n * 2 - world.size + 1;
   const palette = {
@@ -28,20 +28,22 @@ function buildGround(world:World, environment:Environment, bounds?:Bounds) {
     coverage: number[] = [],
     wetness: number[] = [], natural: number[] = [];
   const sampleColor = new THREE.Color();
+  const hasPonds = environment.ponds.length > 0;
   for (let z = 0; z <= resolution; z++)
     for (let x = 0; x <= resolution; x++) {
       const gx = (x + (bounds ? bounds.x - 1 : 0)) / 12 - 2,
         gz = (z + (bounds ? bounds.z - 1 : 0)) / 12 - 2,
-        sample = terrainSample(world, gx, gz);
+        sample = terrainSample(world, gx, gz, hasWaterTiles);
       positions.push(toScene(gx), sample.height, toScene(gz));
       coverage.push(sample.coverage);
-      natural.push(sample.naturalHeight);
-      let wet = 0;
-      if (environment.ponds.length) for (const [level, weight] of waterWeights(world.size, gx, gz, i => environment.cells[i].water, i => environment.cells[i].hole))
-        wet = Math.max(wet, weight * waterSupport(sample.naturalHeight, level + WATER_INSET));
-      wetness.push(wet);
-      sampleColor.setRGB(1, 1, 1);
-      colors.push(sampleColor.r, sampleColor.g, sampleColor.b);
+      if (hasPonds) {
+        natural.push(sample.naturalHeight);
+        let wet = 0;
+        for (const [level, weight] of waterWeights(world.size, gx, gz, i => environment.cells[i].water, i => environment.cells[i].hole))
+          wet = Math.max(wet, weight * waterSupport(sample.naturalHeight, level + WATER_INSET));
+        wetness.push(wet);
+      }
+      colors.push(1, 1, 1);
     }
 
   const boundary = new Map<string, [number, number]>();
@@ -83,6 +85,7 @@ function buildGround(world:World, environment:Environment, bounds?:Bounds) {
       world,
       (x + world.size - 1) / 2,
       (z + world.size - 1) / 2,
+      hasWaterTiles,
     );
     const i = coverage.length;
     positions.push(x, sample.height, z);
@@ -94,11 +97,13 @@ function buildGround(world:World, environment:Environment, bounds?:Bounds) {
   };
   const triangle = (a: number, b: number, c: number, refine = true) => {
 
-    if (
-      refine &&
-      Math.min(coverage[a], coverage[b], coverage[c]) < 0.5 &&
-      Math.max(coverage[a], coverage[b], coverage[c]) >= 0.5
-    ) {
+    const min = Math.min(coverage[a], coverage[b], coverage[c]);
+    if (min > 0.5) {
+      indices.push(a, b, c);
+      return;
+    }
+    if (Math.max(coverage[a], coverage[b], coverage[c]) < 0.5) return;
+    if (refine && min < 0.5) {
       const ab = midpoint(a, b),
         bc = midpoint(b, c),
         ca = midpoint(c, a);
@@ -128,18 +133,20 @@ function buildGround(world:World, environment:Environment, bounds?:Bounds) {
   };
   // Resolve narrow banks only where a water boundary crosses an elevation slope.
   const detailed = new Set<number>();
-  for (let z = 0; z < resolution; z++) for (let x = 0; x < resolution; x++) {
-    const a = z * stride + x, corners = [a, a + 1, a + stride, a + stride + 1];
-    const wet = corners.map(i => wetness[i]), heights = corners.map(i => natural[i]);
-    if (Math.max(...wet) > .05 && Math.min(...wet) < .98 && Math.max(...heights) - Math.min(...heights) > .025)
-      detailed.add(z * resolution + x);
+  if (hasPonds) for (let z = 0; z < resolution; z++) for (let x = 0; x < resolution; x++) {
+    const a = z * stride + x, b = a + 1, c = a + stride, d = c + 1;
+    if (Math.max(wetness[a], wetness[b], wetness[c], wetness[d]) <= .05 ||
+        Math.min(wetness[a], wetness[b], wetness[c], wetness[d]) >= .98) continue;
+    const highest = Math.max(natural[a], natural[b], natural[c], natural[d]);
+    const lowest = Math.min(natural[a], natural[b], natural[c], natural[d]);
+    if (highest - lowest > .025) detailed.add(z * resolution + x);
   }
   const refined = new Map<string, number>();
   const vertex = (x: number, z: number) => {
     if (Number.isInteger(x) && Number.isInteger(z)) return z * stride + x;
     const key = `${x}:${z}`, found = refined.get(key);
     if (found !== undefined) return found;
-    const gx = (x + (bounds ? bounds.x - 1 : 0)) / 12 - 2, gz = (z + (bounds ? bounds.z - 1 : 0)) / 12 - 2, sample = terrainSample(world, gx, gz), i = coverage.length;
+    const gx = (x + (bounds ? bounds.x - 1 : 0)) / 12 - 2, gz = (z + (bounds ? bounds.z - 1 : 0)) / 12 - 2, sample = terrainSample(world, gx, gz, hasWaterTiles), i = coverage.length;
     positions.push(toScene(gx), sample.height, toScene(gz)); colors.push(1, 1, 1); coverage.push(sample.coverage);
     refined.set(key, i); return i;
   };
@@ -225,7 +232,7 @@ function buildGround(world:World, environment:Environment, bounds?:Bounds) {
         }
         const gx = (x + world.size - 1) / 2,
           gz = (z + world.size - 1) / 2;
-        const sample = terrainSample(world, gx, gz);
+        const sample = terrainSample(world, gx, gz, hasWaterTiles);
         const f = Math.min(1, distance / 5),
           blend = f * f * (3 - 2 * f);
         apronPositions.push(x, sample.height, z);
@@ -338,7 +345,8 @@ function buildGround(world:World, environment:Environment, bounds?:Bounds) {
 }
 
 export function makeGround(world:World, environment:Environment, cache?:ReturnType<typeof createTerrainCache>) {
-  if (!cache || !world.terrain?.floating || world.size <= 12) return buildGround(world,environment);
+  const hasWaterTiles = world.terrain?.tiles.some(tile => tile.surface === "slick") ?? false;
+  if (!cache || !world.terrain?.floating || world.size <= 12) return buildGround(world,environment,hasWaterTiles);
   const grounds:THREE.BufferGeometry[] = [], banks:THREE.BufferGeometry[] = [];
   const length = 48, total = (world.size + 3) * 12;
   for (let z = 0; z < total; z += length) for (let x = 0; x < total; x += length) {
@@ -353,7 +361,7 @@ export function makeGround(world:World, environment:Environment, cache?:ReturnTy
     let chunk = cache.get(id);
     if (chunk?.key !== key) {
       chunk?.ground.dispose(); chunk?.bank.dispose();
-      const result = buildGround(world,environment,{x,z,length});
+      const result = buildGround(world,environment,hasWaterTiles,{x,z,length});
       const ground = result.group.getObjectByName("continuous-ground") as THREE.Mesh<THREE.BufferGeometry,THREE.Material>;
       const bank = result.group.getObjectByName("terrain-bank") as THREE.Mesh<THREE.BufferGeometry,THREE.Material>;
       chunk = {key,ground:ground.geometry,bank:bank.geometry};

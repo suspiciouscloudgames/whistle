@@ -1,6 +1,6 @@
 "use client";
 import { useLanguage } from "./Language";
-import { useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 type Props = {
   size: number;
   renderCell: (i: number) => ReactNode;
@@ -11,6 +11,8 @@ type Props = {
   onEnd: () => void;
   onHold: (i: number) => void;
   canHold: boolean;
+  canPlace: boolean;
+  turnEndsAt?: number;
   overlay?: ReactNode;
 };
 export function PaintGrid(p: Props) {
@@ -27,8 +29,18 @@ export function PaintGrid(p: Props) {
     cells: Set<number>;
     timer?: ReturnType<typeof setTimeout>;
   } | null>(null);
+  useLayoutEffect(() => () => {
+    clearTimeout(gesture.current?.timer);
+    gesture.current = null;
+  }, [p.canPlace, p.turnEndsAt]);
   const clearTimer = () => {
     if (gesture.current?.timer) clearTimeout(gesture.current.timer);
+  };
+  const finish = (id: number) => {
+    if (gesture.current?.id !== id) return;
+    clearTimer();
+    gesture.current = null;
+    p.onEnd();
   };
   return (
     <div
@@ -43,6 +55,8 @@ export function PaintGrid(p: Props) {
         );
         if (!button) return;
         const i = Number(button.dataset.cell);
+        const erase = p.occupied(i);
+        if (!p.canPlace && !(p.canHold && erase)) return;
         e.currentTarget.setPointerCapture(e.pointerId);
         const g = {
           id: e.pointerId,
@@ -50,14 +64,14 @@ export function PaintGrid(p: Props) {
           last: i,
           x: e.clientX,
           y: e.clientY,
-          erase: p.occupied(i),
+          erase,
           moved: false,
           held: false,
           cells: new Set([i]),
           timer: undefined as ReturnType<typeof setTimeout> | undefined,
         };
         gesture.current = g;
-        if (p.canHold && p.occupied(i))
+        if (p.canHold && erase)
           g.timer = setTimeout(() => {
             g.held = true;
             p.onHold(i);
@@ -69,7 +83,9 @@ export function PaintGrid(p: Props) {
         if (Math.hypot(e.clientX - g.x, e.clientY - g.y) < 7 && !g.moved)
           return;
         clearTimer();
+        const firstMove = !g.moved;
         g.moved = true;
+        if (!p.canPlace) return;
         const r = e.currentTarget.getBoundingClientRect();
         const x = Math.max(
           0,
@@ -85,6 +101,7 @@ export function PaintGrid(p: Props) {
             Math.floor(((e.clientY - r.top) / r.height) * p.size),
           ),
         );
+        const previousSize = g.cells.size;
         const ax = g.last % p.size,
           az = Math.floor(g.last / p.size),
           steps = Math.max(Math.abs(x - ax), Math.abs(z - az), 1);
@@ -94,26 +111,16 @@ export function PaintGrid(p: Props) {
               Math.round(ax + ((x - ax) * n) / steps),
           );
         g.last = z * p.size + x;
-        p.onPaint([...g.cells], g.erase);
+        if (firstMove || g.cells.size > previousSize) p.onPaint([...g.cells], g.erase);
       }}
       onPointerUp={(e) => {
         const g = gesture.current;
         if (!g || g.id !== e.pointerId) return;
-        clearTimer();
-        if (!g.held && !g.moved) p.onPaint([g.first], g.erase);
-        gesture.current = null;
-        p.onEnd();
+        if (p.canPlace && !g.held && !g.moved) p.onPaint([g.first], g.erase);
+        finish(e.pointerId);
       }}
-      onPointerCancel={() => {
-        clearTimer();
-        gesture.current = null;
-        p.onEnd();
-      }}
-      onLostPointerCapture={() => {
-        clearTimer();
-        gesture.current = null;
-        p.onEnd();
-      }}
+      onPointerCancel={e => finish(e.pointerId)}
+      onLostPointerCapture={e => finish(e.pointerId)}
     >
       {Array.from({ length: p.size * p.size }, (_, i) => (
         <button
@@ -122,7 +129,7 @@ export function PaintGrid(p: Props) {
           className={`grid-cell ${p.cellClass(i)}`}
           aria-label={p.label(i)}
           onClick={(e) => {
-            if (e.detail === 0) {
+            if (p.canPlace && e.detail === 0) {
               p.onPaint([i], p.occupied(i));
               p.onEnd();
             }

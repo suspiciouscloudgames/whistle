@@ -445,6 +445,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
             onUndo={undo}
             onRedo={redo}
             canPlace={turn.canPlace}
+            turnEndsAt={turn.endsAt}
             turnBar={<TurnBar {...turn} tilesLeft={turnTiles ? TURN_TILE_LIMIT - turnTiles.added.length : undefined} />}
             onMoveSymbol={(id, index) => {
               if (!canPlaceNow()) return;

@@ -289,37 +289,39 @@ test("cloud sky retains gray cloud masses in daylight and at night", async ({pag
     localStorage.setItem("whistle.world.v2",JSON.stringify(world));
     localStorage.setItem("whistle.language","ko");
   },world);
-  await page.goto(".");
-  const skyBands=()=>page.locator(".scene canvas").evaluate(canvas=>new Promise<number[]>(resolve=>{
-    requestAnimationFrame(()=>{
-      const source=canvas as HTMLCanvasElement;
-      const copy=document.createElement("canvas");
-      copy.width=source.width;copy.height=Math.floor(source.height*.18);
-      const context=copy.getContext("2d")!;
-      context.drawImage(source,0,0);
-      const data=context.getImageData(0,0,copy.width,copy.height).data;
-      const bands=[0,0,0,0];
-      for(let i=0;i<data.length;i+=4){
-        const v=data[i];
-        if(v<15)bands[0]++;
-        else if(v<100)bands[1]++;
-        else if(v<235)bands[2]++;
-        else bands[3]++;
-      }
-      resolve(bands.map(count=>count/(data.length/4)));
-    });
-  }));
+  await page.goto(`?meeting=cloud-sky-${Date.now()}`);
+  await expect(page.getByRole("button", { name: "파일 저장", exact: true })).toHaveAttribute("aria-description", "이 브라우저에 저장됨");
+  const canvas = page.locator(".play-shell canvas");
+  const skyBands = () => canvas.evaluate(sourceElement => {
+    const source=sourceElement as HTMLCanvasElement;
+    const copy=document.createElement("canvas");
+    copy.width=source.width;copy.height=Math.floor(source.height*.18);
+    const context=copy.getContext("2d")!;
+    context.drawImage(source,0,0);
+    const data=context.getImageData(0,0,copy.width,copy.height).data;
+    const bands=[0,0,0,0];
+    for(let i=0;i<data.length;i+=4){
+      const v=data[i];
+      if(v<15)bands[0]++;
+      else if(v<100)bands[1]++;
+      else if(v<235)bands[2]++;
+      else bands[3]++;
+    }
+    return bands.map(count=>count/(data.length/4));
+  });
   await page.getByRole("button",{name:"플레이",exact:true}).click();
+  await expect(canvas).toHaveAttribute("data-ready", "true", { timeout: 30_000 });
   await expect.poll(async()=> (await skyBands())[2]).toBeGreaterThan(.1);
   await expect.poll(async()=> (await skyBands())[3]).toBeGreaterThan(.1);
-  await page.locator(".scene canvas").screenshot({path:testInfo.outputPath("cloud-day.png")});
+  await canvas.screenshot({path:testInfo.outputPath("cloud-day.png")});
   await page.getByRole("button",{name:"만들기로 돌아가기",exact:true}).click();
   await page.locator(".daylight-indicator").click();
   await page.getByRole("button",{name:"한밤중",exact:true}).click();
   await page.getByRole("button",{name:"플레이",exact:true}).click();
+  await expect(canvas).toHaveAttribute("data-ready", "true", { timeout: 30_000 });
   await expect.poll(async()=> (await skyBands())[0]).toBeGreaterThan(.1);
   await expect.poll(async()=> (await skyBands())[1]).toBeGreaterThan(.1);
-  await page.locator(".scene canvas").screenshot({path:testInfo.outputPath("cloud-night.png")});
+  await canvas.screenshot({path:testInfo.outputPath("cloud-night.png")});
 });
 
 test("water keeps reflected contrast without dense dots or hard tonal bands", async ({page},testInfo) => {

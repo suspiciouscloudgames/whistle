@@ -313,7 +313,14 @@ test("turn handoff shares only placed materials and a recipient edits one indepe
 
 test("distant personal footings reveal worlds and return visitors silently after floor deletion or disconnect",async({browser,baseURL},info)=>{
   const a=await newPlayer(browser,baseURL),b=await newPlayer(browser,baseURL),aa=observe(a),bb=observe(b),link=`?meeting=walk-${Date.now()}`;
-  await a.goto(link);await ready(a);await b.goto(link);await ready(b);await writeTitle(b,"B의 재료");
+  const roadA:[number,number][]=[],roadB:[number,number][]=[];
+  for(let z=0;z<=10;z++)for(let x=5;x<=7;x++)roadA.push([x,z]);
+  for(let z=0;z<=4;z++)for(let x=5;x<=11;x++)roadA.push([x,z]);
+  for(let z=0;z<=10;z++)for(let x=0;x<=2;x++)roadB.push([x,z]);
+  for(let z=9;z<=11;z++)for(let x=0;x<=7;x++)roadB.push([x,z]);
+  await a.goto(link);await ready(a);await paint(a,roadA);
+  await expect.poll(() => aa.view().ownWorld.terrain!.tiles[11].void).not.toBe(true);
+  await b.goto(link);await ready(b);await writeTitle(b,"B의 재료");
   await expect(a.locator("[data-cell]")).toHaveCount(144);
   await expect(a.getByRole("button",{name:"시작점",exact:true})).toHaveCount(0);
   await expect(a.locator('[data-approach]')).toHaveCount(1);
@@ -324,13 +331,8 @@ test("distant personal footings reveal worlds and return visitors silently after
   await expect.poll(()=>aa.view().connections.length).toBe(1);
   const gate=aa.view().connections[0];expect(gate.x).toBe(25);expect(gate.z).toBeLessThanOrEqual(4);
   expect(bb.view().connections).toHaveLength(0);await expect(b.locator('[data-approach]')).toHaveCount(1);
-  const roadA:[number,number][]=[],roadB:[number,number][]=[];
-  for(let z=0;z<=10;z++)for(let x=5;x<=7;x++)roadA.push([x,z]);
-  for(let z=0;z<=4;z++)for(let x=5;x<=11;x++)roadA.push([x,z]);
-  for(let z=0;z<=10;z++)for(let x=0;x<=2;x++)roadB.push([x,z]);
-  for(let z=9;z<=11;z++)for(let x=0;x<=7;x++)roadB.push([x,z]);
   // Keep the neighbor's landing empty until the visitor opens it.
-  expect(bb.view().ownWorld.terrain!.tiles[gate.z*12].void).toBe(true);await paint(a,roadA);
+  expect(bb.view().ownWorld.terrain!.tiles[gate.z*12].void).toBe(true);
   await a.reload();await ready(a);expect(aa.view().connections[0].id).toBe(gate.id);
   await play(a);await walk(a,19,gate.z);await walk(a,24,gate.z);await walk(a,25,gate.z);
   await expect.poll(()=>aa.view().joined.length).toBe(2);expect(bb.view().joined).toHaveLength(1);
