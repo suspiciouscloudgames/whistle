@@ -68,32 +68,64 @@ const save = (page: Page) => page.getByRole("button", { name: "파일 저장", e
 async function enter(page: Page, room: string) {
   await page.goto(url + "/whistle/?meeting=" + room);
   await expect(save(page)).toHaveAttribute("aria-description", "이 브라우저에 저장됨");
+  await expect(save(page)).toHaveText("파일 저장");
+  for (const name of ["다시 시작", "불러오기", "파일 저장"]) {
+    await expect(page.getByRole("button", { name, exact: true })).toHaveCSS("font-size", "13px");
+  }
+  await expect(page.locator(".topbar").getByRole("button", { name: "아카이브", exact: true })).toHaveCount(0);
 }
+async function openArchive(page: Page) {
+  const open = page.getByRole("button", { name: "불러오기", exact: true });
+  await open.click();
+  const sources = page.getByRole("dialog", { name: "불러오기", exact: true });
+  const archive = sources.getByRole("button", { name: "아카이브", exact: true });
+  await expect(sources.getByRole("button", { name: "로컬 파일", exact: true })).toBeVisible();
+  for (const property of ["font-size", "color"]) {
+    await expect(archive).toHaveCSS(property, await open.evaluate((el, prop) => getComputedStyle(el).getPropertyValue(prop), property));
+  }
+  await archive.click();
+}
+const nextUpload = (page: Page) => page.waitForResponse(response =>
+  response.request().method() === "POST" && new URL(response.url()).pathname === ARCHIVE_PATH);
 async function download(page: Page) {
-  const event = page.waitForEvent("download");
   await save(page).click();
-  return readFile((await (await event).path())!);
+  const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "로컬 저장", exact: true }).click()]);
+  return readFile((await file.path())!);
+}
+async function upload(page: Page) {
+  await save(page).click();
+  const [response] = await Promise.all([nextUpload(page), page.getByRole("button", { name: "아카이브 저장", exact: true }).click()]);
+  await expect(page.locator(".toast")).toHaveCount(0);
+  if (response.ok()) await expect(page.locator(".editor-message")).toHaveCount(0);
+  return response;
 }
 
-test("downloads the published file, updates the owner's entry and lets another browser save a copy", async ({ page, browser }) => {
+test("local saves stay private and archive saves update the owner's entry and let another browser save a copy", async ({ page, browser }) => {
   objects.clear();
   const original = createMeetingWorld(123);
   original.title = "갈대의 세계";
   await page.addInitScript(world => localStorage.setItem("whistle.world.v2", JSON.stringify(world)), original);
   await enter(page, "archive-owner");
-  await page.getByRole("button", { name: "아카이브", exact: true }).click();
+  await openArchive(page);
   await expect(page.getByRole("dialog")).toContainText("아직 공개된 세계가 없습니다.");
   await page.getByRole("button", { name: "닫기", exact: true }).click();
+  let downloads = 0, posts = 0;
+  page.on("download", () => downloads++);
+  page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === ARCHIVE_PATH) posts++; });
+  await save(page).click();
+  await page.getByRole("dialog").getByRole("button", { name: "닫기", exact: true }).click();
   const file = await download(page);
-  await expect(page.getByRole("status")).toContainText("로컬 파일과 아카이브에 저장했습니다.");
+  expect(posts).toBe(0);
+  expect(objects.size).toBe(0);
+  expect((await upload(page)).ok()).toBe(true);
+  expect(downloads).toBe(1);
   const [key] = objects.keys();
   expect(objects.get(key)?.body.equals(file)).toBe(true);
   await page.reload();
-  await page.getByRole("button", { name: "아카이브", exact: true }).click();
+  await openArchive(page);
   await page.getByRole("button", { name: /갈대의 세계/ }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await download(page);
-  await expect(page.getByRole("status")).toContainText("로컬 파일과 아카이브에 저장했습니다.");
+  expect((await upload(page)).ok()).toBe(true);
   expect([...objects.keys()]).toEqual([key]);
   const ownerBytes = objects.get(key)!.body;
 
@@ -110,7 +142,7 @@ test("downloads the published file, updates the owner's entry and lets another b
         expect(after.x + after.width).toBeLessThanOrEqual(321);
       }
     }
-    await guest.getByRole("button", { name: "아카이브", exact: true }).click();
+    await openArchive(guest);
     await guest.getByRole("button", { name: /갈대의 세계/ }).click();
     await expect(guest.getByRole("dialog")).toHaveCount(0);
     await expect.poll(async () => (await savedWorld(guest)).title).toBe(original.title);
@@ -118,31 +150,34 @@ test("downloads the published file, updates the owner's entry and lets another b
     await guest.getByRole("button", { name: "높이기", exact: true }).click();
     await guest.locator('[data-cell="0"]').click();
     const fork = await download(guest);
-    await expect(guest.getByRole("status")).toContainText("로컬 파일과 아카이브에 저장했습니다.");
+    expect((await upload(guest)).ok()).toBe(true);
     expect(objects.size).toBe(2);
     expect(objects.get(key)!.body.equals(ownerBytes)).toBe(true);
     expect([...objects.values()].some(item => item.body.equals(fork))).toBe(true);
   } finally { await other.close(); }
 });
 
-test("retries the failed archive snapshot without downloading again", async ({ page, request }) => {
+test("retries the failed archive snapshot without a local download", async ({ page, request }) => {
   objects.clear();
   await enter(page, "archive-retry");
   let downloads = 0;
   page.on("download", () => downloads++);
   failWrites = true;
-  let file: Buffer;
+  const snapshot = await savedWorld(page);
   try {
-    file = await download(page);
-    await expect(page.getByRole("alert")).toContainText("로컬 파일만 저장했습니다.");
+    expect((await upload(page)).ok()).toBe(false);
+    await expect(page.getByRole("alert")).toContainText("아카이브 요청에 실패했습니다.");
+    await expect(page.getByRole("alert")).toHaveCSS("position", "static");
   } finally { failWrites = false; }
   expect(objects.size).toBe(0);
   await page.getByRole("button", { name: "높이기", exact: true }).click();
   await page.locator('[data-cell="0"]').click();
-  await page.getByRole("button", { name: "아카이브 저장 재시도" }).click();
-  await expect(page.getByRole("status")).toContainText("로컬 파일과 아카이브에 저장했습니다.");
-  expect(downloads).toBe(1);
-  expect([...objects.values()][0].body.equals(file)).toBe(true);
+  const [retried] = await Promise.all([nextUpload(page), page.getByRole("button", { name: "아카이브 저장 재시도" }).click()]);
+  expect(retried.ok()).toBe(true);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".editor-message")).toHaveCount(0);
+  expect(downloads).toBe(0);
+  expect(JSON.parse([...objects.values()][0].body.toString())).toEqual(snapshot);
   const api = url + ARCHIVE_PATH;
   expect((await request.post(api, { data: {} })).status()).toBe(403);
   expect((await request.post(api, { data: {}, headers: { Authorization: "Bearer " + "a".repeat(64) } })).status()).toBe(400);

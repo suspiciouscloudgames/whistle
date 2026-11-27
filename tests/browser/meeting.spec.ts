@@ -168,6 +168,7 @@ test("browser storage restores my world and edited gifts after both the browser 
     await expect(a.getByRole("button",{name:"파일 저장",exact:true})).toHaveAttribute("aria-description","이 브라우저에 저장됨");
     const saved=state.view().ownWorld;
     const download=a.waitForEvent("download");await a.getByRole("button",{name:"파일 저장",exact:true}).click();
+    await a.getByRole("dialog").getByRole("button",{name:"로컬 저장",exact:true}).click();
     const exported=await download;const stream=await exported.createReadStream();const chunks:Buffer[]=[];
     for await(const chunk of stream!)chunks.push(Buffer.from(chunk));
     const file=JSON.parse(Buffer.concat(chunks).toString());expect(file.assets.some((a:any)=>a.text==="내가 바꾼 재료"&&a.received)).toBe(true);

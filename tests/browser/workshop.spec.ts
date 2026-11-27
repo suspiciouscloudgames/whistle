@@ -239,9 +239,13 @@ test("the countdown stays above the map and advances without repeatedly renderin
     await expect(b.locator('.workspace [data-turn]')).toHaveAttribute("data-turn","other");
     for (const page of [a, b]) {
       await expect(page.getByRole("progressbar", {name:"차례 남은 시간"})).toBeVisible();
-      const bar = await page.locator(".turn-status").boundingBox();
+      await expect(page.locator(".turn-label")).toHaveCSS("font-size", "13px");
+      const label = await page.locator(".turn-label").boundingBox();
+      const bar = await page.getByRole("progressbar", {name:"차례 남은 시간"}).boundingBox();
       const map = await page.locator(".world-grid").boundingBox();
+      expect(label!.y + label!.height).toBeLessThanOrEqual(bar!.y);
       expect(bar!.y + bar!.height).toBeLessThanOrEqual(map!.y);
+      expect(map!.y - (bar!.y + bar!.height)).toBeLessThanOrEqual(4);
       expect(bar!.width).toBeCloseTo(map!.width, 0);
     }
     await a.waitForTimeout(1200);

@@ -19,6 +19,7 @@ test("toolbar and palette keep language, dialogs, and file selection connected",
   await expect(page.getByRole("button", { name: "공유", exact: true })).toHaveCount(0);
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "파일 저장", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "로컬 저장", exact: true }).click();
   expect((await download).suggestedFilename()).toMatch(/\.whistle\.json$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "다시 시작", exact: true }).click();
@@ -38,6 +39,7 @@ test("toolbar and palette keep language, dialogs, and file selection connected",
   await expect(page.locator('[data-cell="126"]')).toHaveAccessibleName(/시작점/);
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "불러오기", exact: true }).click();
+  await page.getByRole("dialog", { name: "불러오기" }).getByRole("button", { name: "로컬 파일" }).click();
   const imported = terrainFixtures().flat;
   imported.terrain!.tiles[0].height = 2;
   await (await chooser).setFiles({

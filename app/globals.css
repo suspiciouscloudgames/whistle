@@ -7,6 +7,7 @@
 }
 
 :root {
+  --menu-font-size: 13px;
   font-family:
     "Helvetica Neue", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   font-size: 12px;
@@ -111,6 +112,7 @@ p {
   font-size: 12px;
 }
 .fullscreen-toggle,
+.file-choices,
 .file-actions {
   color: #666;
 }
@@ -810,7 +812,7 @@ p {
 }
 .new-actions button {
   border: 1px solid #ccc;
-  font-size: 12px;
+  font-size: var(--menu-font-size);
   padding: 9px 15px;
 }
 .error {
@@ -820,28 +822,6 @@ p {
   padding: 10px 0;
   border-bottom: 1px solid #aaa;
   margin-top: 13px;
-}
-.toast,
-.save-error {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #111;
-  color: #fff;
-  padding: 11px 17px;
-  font-size: 11px;
-  z-index: 1000;
-  width: max-content;
-  max-width: calc(100vw - 24px);
-  line-height: 1.7;
-}
-.save-error button {
-  color: white;
-  text-decoration: underline;
-}
-.toast {
-  pointer-events: none;
 }
 @media (min-width: 1500px) {
   .workspace {
@@ -1820,10 +1800,10 @@ p {
   align-items: center;
   gap: 4px;
 }
-.archive-menu { min-height: 40px; padding: 4px 8px; font-size: 14px; }
-.archive-save-note { display: block; color: #555; font-size: 11px; line-height: 1.2; white-space: nowrap; }
-.archive-save-error { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 18px; border-bottom: 1px solid #ccc; font-size: 14px; }
-.archive-save-error button { padding: 6px 0; text-decoration: underline; }
+.editor-message { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0; padding: 4px 18px; color: #555; font-size: 14px; }
+.editor-message button { padding: 6px 0; text-decoration: underline; }
+.file-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.file-choices button { border: 1px solid #ccc; }
 .archive-list { list-style: none; padding: 0; margin: 0; }
 .archive-list li { border-bottom: 1px solid #ddd; }
 .archive-list button { display: flex; width: 100%; min-height: 44px; gap: 12px; align-items: center; justify-content: space-between; text-align: start; }
@@ -1865,9 +1845,9 @@ p {
   justify-self: end;
   gap: 8px;
 }
-.topbar .file-actions button {
+.file-choices button, .topbar .file-actions button {
   min-height: 40px;
-  font-size: 12px;
+  font-size: var(--menu-font-size);
   padding: 7px 8px;
 }
 .workspace {
@@ -1896,8 +1876,7 @@ p {
   .topbar .file-actions {
     gap: 0;
   }
-  .topbar .file-actions button {
-    font-size: 11px;
+  .file-choices button, .topbar .file-actions button {
     padding: 7px 6px;
   }
 }
@@ -1906,7 +1885,7 @@ p {
   .topbar { padding-inline: 10px; column-gap: 4px; }
   .topbar .brand-lockup { gap: 4px; }
   .topbar .view-tabs button { min-width: 0; padding-inline: 6px; white-space: nowrap; }
-  .topbar .file-actions button, .archive-menu { padding-inline: 4px; }
+  .topbar .file-actions button { padding-inline: 4px; }
 }
 
 .environment-light {

@@ -34,10 +34,10 @@ export function TurnBar({ canPlace, endsAt, clock, tilesLeft }: ReturnType<typeo
   const progress = timeLeft(endsAt, clock) / TURN_DURATION;
   const label = canPlace ? "배치할 차례" : "편집할 시간";
   return <div className={`turn-status${canPlace ? " own-turn" : " other-turn"}`} data-turn={canPlace ? "own" : "other"}>
+    <span className="turn-label" role="status">{t(label)}{canPlace && tilesLeft !== undefined && ` / ${t("남은 타일 수")}: ${tilesLeft}`}</span>
     <div className="turn-track" role="progressbar" aria-label={t("차례 남은 시간")}
       aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
       <div className="turn-fill" style={{ transform: `scaleX(${progress})` }} />
     </div>
-    <span className="turn-label" role="status">{t(label)}{canPlace && tilesLeft !== undefined && ` / ${t("남은 타일 수")}: ${tilesLeft}`}</span>
   </div>;
 }

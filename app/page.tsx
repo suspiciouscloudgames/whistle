@@ -17,6 +17,7 @@ import { uncountedTiles, TURN_TILE_LIMIT } from "@/lib/turn-tiles";
 import { TurnBar, useWorkshopTurn } from "@/components/whistle/TurnBar";
 import type { TerrainTool } from "@/lib/tile";
 import { ArchiveDialog } from "@/components/whistle/ArchiveDialog";
+import { downloadWorld } from "@/lib/sharing";
 import { useArchiveSave } from "@/components/whistle/useArchiveSave";
 import { useWorldDocument } from "@/components/whistle/useWorldDocument";
 import { SoundMaker } from "@/components/whistle/SoundMaker";
@@ -68,11 +69,11 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     [playing, setPlaying] = useState(false),
     [debugVisible, setDebugVisible] = useState(false),
     [log, setLog] = useState<Event[]>([]),
-    [toast, setToast] = useState(""),
+    [editorMessage, setEditorMessage] = useState(""),
     [showMaker, setShowMaker] = useState(false),
     [editingAsset, setEditingAsset] = useState<Asset | undefined>(),
     [newDialog, setNewDialog] = useState(false),
-    [archiveOpen, setArchiveOpen] = useState(false),
+    [fileDialog, setFileDialog] = useState<"open" | "save" | "archive" | null>(null),
     [playKey, setPlayKey] = useState(0);
   const makeButton = useRef<HTMLButtonElement>(null);
   const hasPlayed = useRef(false);
@@ -113,15 +114,15 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     controls = useRef(new Set<string>()),
     stick = useRef({ x: 0, y: 0 }),
     file = useRef<HTMLInputElement>(null),
-    toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    messageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   simulationRef.current = simulation;
   const notify = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 4200);
+    setEditorMessage(message);
+    if (messageTimer.current) clearTimeout(messageTimer.current);
+    messageTimer.current = setTimeout(() => setEditorMessage(""), 4200);
   }, []);
   const audio = useGameAudio();
-  const archiveSave = useArchiveSave(notify);
+  const archiveSave = useArchiveSave();
   const whistle = useMeetingWhistle(meeting, playing, player, audio.whistle);
   const meetingReset = useRef(meeting.view.reset.id);
   useLayoutEffect(() => {
@@ -294,7 +295,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
   }, [playing]);
   useEffect(
     () => () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
+      if (messageTimer.current) clearTimeout(messageTimer.current);
     },
     [],
   );
@@ -339,7 +340,15 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     if (meeting.status === "online") meeting.send({type:"publish",world:portalWorld(getWorld()),received:[...receivedMaterials.current]});
     setShowMaker(false); setEditingAsset(undefined); setSelected(null); setPlacingAsset(null);
   };
-  const saveFile = () => archiveSave.saveFile(getWorld());
+  const saveFile = (destination: "archive" | "local") => {
+    setFileDialog(null);
+    try {
+      const current = getWorld();
+      const snapshot = new Blob([JSON.stringify(current, null, 2)], { type: "application/json" });
+      if (destination === "archive") archiveSave.upload(snapshot);
+      else downloadWorld(snapshot, current.title);
+    } catch { notify("파일을 저장하지 못했습니다."); }
+  };
   const deleteSymbol = () => {
     if (!editingAsset) return;
     if (!canPlaceNow()) return;
@@ -388,17 +397,33 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
         onEnter={enter}
         onExit={exit}
         onNew={() => setNewDialog(true)}
-        onImport={() => file.current?.click()}
-        onArchive={() => setArchiveOpen(true)}
-        onSave={saveFile}
+        onImport={() => setFileDialog("open")}
+        onSave={() => setFileDialog("save")}
         notify={notify}
       />
-      {archiveSave.failure && !playing && <div className="archive-save-error" role="alert">
-        <span>{t(archiveSave.failure.save.local ? "로컬 파일만 저장했습니다." : "파일을 저장하지 못했습니다.")} {t(archiveSave.failure.reason)}</span>
+      {!playing && (editorMessage || meeting.error) &&
+        <p className="editor-message" role="status">{t(editorMessage || meeting.error || "")}</p>}
+      {!playing && saveStatus.includes("부족") && <div className="editor-message" role="alert">
+        {t("저장 공간이 부족합니다.")}
+        <button onClick={() => setFileDialog("save")}>{t("파일 저장")}</button>
+      </div>}
+      {archiveSave.failure && !playing && <div className="editor-message" role="alert">
+        <span>{t(archiveSave.failure.reason)}</span>
         {archiveSave.retry && <button onClick={archiveSave.retry}>{t("아카이브 저장 재시도")}</button>}
         <button onClick={archiveSave.dismiss}>{t("닫기")}</button>
       </div>}
-      {archiveOpen && <ArchiveDialog onClose={() => setArchiveOpen(false)} onOpen={world => {
+      {(fileDialog === "open" || fileDialog === "save") && <Dialog title={t(fileDialog === "open" ? "불러오기" : "파일 저장")} onClose={() => setFileDialog(null)}>
+        <div className="file-choices">
+          {fileDialog === "open" ? <>
+            <button onClick={() => setFileDialog("archive")}>{t("아카이브")}</button>
+            <button onClick={() => { file.current?.click(); setFileDialog(null); }}>{t("로컬 파일")}</button>
+          </> : <>
+            <button onClick={() => saveFile("archive")}>{t("아카이브 저장")}</button>
+            <button onClick={() => saveFile("local")}>{t("로컬 저장")}</button>
+          </>}
+        </div>
+      </Dialog>}
+      {fileDialog === "archive" && <ArchiveDialog onClose={() => setFileDialog(null)} onOpen={world => {
         const reason = handleImport(world);
         if (!reason) resumeAutosave();
         return reason;
@@ -530,9 +555,8 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
         <Dialog title={t("다시 시작")} onClose={() => setNewDialog(false)}>
           <p>{t("현재 작업이 삭제됩니다.")}</p>
           <div className="new-actions">
-            <button onClick={saveFile}>
-              {t("현재 파일 저장")}
-              <small className="archive-save-note">{t("아카이브에 공개")}</small>
+            <button onClick={() => setFileDialog("save")}>
+              {t("파일 저장")}
             </button>
             <button className="primary" onClick={newWorld}>
               {t("다시 시작")}
@@ -540,18 +564,6 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
           </div>
         </Dialog>
       )}
-      {saveStatus.includes("부족") && (
-        <div className="save-error" role="alert">
-          {t("저장 공간이 부족합니다.")}{" "}
-          <button onClick={saveFile}>{t("파일 저장")} · {t("아카이브에 공개")}</button>
-        </div>
-      )}
-      {toast && (
-        <div className="toast" role="status">
-          {t(toast)}
-        </div>
-      )}
-      {meeting?.error && <div className="toast" role="status">{meeting.error}</div>}
     </main>
   );
 }
