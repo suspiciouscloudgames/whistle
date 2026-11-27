@@ -235,7 +235,7 @@ export default function Scene({
     const atmosphere = new THREE.FogExp2(sky, baseFog * currentDay.fog);
     scene.fog = atmosphere;
     const quality = renderQuality();
-    const resolution = quality.name === "low" ? createAdaptiveResolution(quality.pixelRatio) : null;
+    const resolution = quality.name === "low" ? createAdaptiveResolution(quality.pixelRatio, mode === "overview" ? 45 : 28) : null;
     renderer.setPixelRatio(quality.pixelRatio);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.autoUpdate = false;
@@ -279,11 +279,13 @@ export default function Scene({
     scene.add(horizon);
     let structures = derivationRef.current.structures;
     const terrainCache = createTerrainCache();
-    let terrain = makeTerrain(world, structures, derivationRef.current.environment, terrainCache);
+    const compactOverview = mode === "overview" && quality.name === "low";
+    let terrain = makeTerrain(world, structures, derivationRef.current.environment, terrainCache, compactOverview);
     terrain.group.getObjectByName("terrain-bank")!.visible = mode === "play";
     applyPixelMaterials(terrain.group, graphicsDaylight, world.terrain?.floating);
     softenEdges(terrain.group, world.size);
     scene.add(terrain.group);
+    let retiredTerrain: THREE.Group | undefined;
     let terrainSignature = derivationRef.current.key;
     const camera =
       mode === "play"
@@ -415,8 +417,8 @@ export default function Scene({
           fadingMist.push({mesh,opacity:mesh.material.opacity,started:performance.now()});
         }
         scene.remove(terrain.group);
-        disposeGroup(terrain.group);
-        terrain = makeTerrain(worldRef.current, structures, nextDerivation.environment, terrainCache);
+        retiredTerrain = terrain.group;
+        terrain = makeTerrain(worldRef.current, structures, nextDerivation.environment, terrainCache, compactOverview);
         terrain.setGrassDetail?.(renderer.getPixelRatio() / quality.pixelRatio);
         terrain.group.getObjectByName("terrain-bank")!.visible = mode === "play";
         applyPixelMaterials(terrain.group, graphicsDaylight, worldRef.current.terrain?.floating);
@@ -1014,6 +1016,8 @@ export default function Scene({
         shadowTerrain = terrain.group;
       }
       pixelRenderer.render(scene, camera);
+      // Release the old materials after the replacement has acquired its shader programs.
+      if (retiredTerrain) { disposeGroup(retiredTerrain); retiredTerrain = undefined; }
       if (!rendered) {
         rendered = true;
         renderer.domElement.dataset.ready = "true";
@@ -1065,6 +1069,7 @@ export default function Scene({
       renderer.domElement.removeEventListener("keydown", rotatePreview);
       waterReflection.dispose();
       pixelRenderer.dispose();
+      if (retiredTerrain) disposeGroup(retiredTerrain);
       disposeGroup(scene);
       renderer.dispose();
       renderer.domElement.remove();

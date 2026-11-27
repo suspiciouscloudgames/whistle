@@ -162,12 +162,21 @@ test("more than twenty received materials remain editable, excess delivery waits
   assert.equal(recipient.assets.length,250);
   let view=meetingView(room,"b");assert.ok(view.pendingMaterials>0);
   const pending=view.pendingMaterials;
+  const queuedId = [...room.members.get("b")!.materials.keys()].find(id=>!received.includes(id))!;
+  const sourceId = [...room.members.get("a")!.shared].find(([,id])=>id===queuedId)![0];
+  const revision = structuredClone(base);
+  revision.assets.push({...base.assets[0],id:sourceId,text:"updated while waiting"});
+  revision.objects.push({id:"waitlisted",asset:sourceId,x:6,z:10,rotation:0,scale:1});
+  publishMeeting(room,"a",revision);
+  finishTurn(room,"a");
   const deleted=recipient.assets.find(a=>received.includes(a.id))!.id;
   recipient.assets=recipient.assets.filter(a=>a.id!==deleted);
   recipient.assets.find(a=>received.includes(a.id))!.text="edited locally";
   publishMeeting(room,"b",recipient,received);
   view=meetingView(room,"b");assert.equal(view.pendingMaterials,pending-1);
   const next=view.materials.filter(a=>!received.includes(a.id));assert.equal(next.length,1);
+  assert.equal(next[0].id,queuedId);
+  assert.equal(next[0].text,"updated while waiting");
   assert.notEqual(next[0].id,deleted);
   recipient.assets.push(next[0]);received.push(next[0].id);publishMeeting(room,"b",recipient,received);
   assert.equal(meetingView(room,"b").pendingMaterials,pending-1);
@@ -280,7 +289,7 @@ test("ten simultaneous workshop connections keep five pairs through toggles and 
     const socket = new WebSocket(`ws://127.0.0.1:${port}/whistle/meeting?room=workshop&id=${id}&token=${id}-private-session`);
     sockets.push(socket);
     const codec = createMeetingCodec();
-    const client = {id, socket, states:0, partner:"", owner:"", end:0, count:0, title:"", ready:false,
+    const client = {id, socket, states:0, presences:0, yaw:0, gifts:[] as string[], partner:"", owner:"", end:0, count:0, title:"", ready:false,
       publish: (world: ReturnType<typeof meetingWorld>) => {
         for (const frame of codec.encode({type:"publish",world})) socket.send(frame);
       }};
@@ -291,14 +300,20 @@ test("ten simultaneous workshop connections keep five pairs through toggles and 
       client.count = message.presence.onlineCount!;
       client.owner = message.presence.turn?.owner ?? "";
       client.end = message.presence.turn?.endsAt ?? 0;
+      client.yaw = message.presence.peers.find(peer=>peer.id===id)?.player?.yaw ?? 0;
+      if (message.type === "presence") client.presences++;
       if (message.type === "state") {
         client.states++;
         client.partner = message.view.recipients[0] ?? "";
         client.title = message.view.ownWorld.title;
         client.ready = message.view.documentReady;
+        client.gifts = message.view.materials.map(asset=>asset.text ?? "");
         if (!published) {
           published = true;
-          client.publish({...message.view.ownWorld, title:id});
+          const world = message.view.ownWorld;
+          const title = world.assets.find(asset=>asset.prompt?.title)!;
+          title.text=id;
+          client.publish({...world, title:id});
         }
       }
     });
@@ -314,6 +329,16 @@ test("ten simultaneous workshop connections keep five pairs through toggles and 
   const released = clients[0], other = clients.find(c=>c.id!==released.id && c.partner!==released.id)!;
   const survivor = clients.find(c=>c.id===released.partner)!;
   const otherStates = other.states;
+  const move = (yaw:number) => released.socket.send(JSON.stringify({
+    type:"position",playing:true,player:{x:19,z:10,yaw,grounded:true},
+  }));
+  const beforeMovement = clients.map(c=>c.presences);
+  move(.1);
+  await until(()=>clients.every((c,i)=>c.presences>beforeMovement[i]));
+  const settled = clients.map(c=>c.presences);
+  move(.25);
+  await until(()=>released.yaw===.25);
+  assert.deepEqual(clients.map((c,i)=>c.presences-settled[i]),clients.map(c=>Number(c===released)));
   now += 5000;
   released.socket.terminate();
   await until(()=>survivor.count===9 && survivor.partner==="");
@@ -340,6 +365,8 @@ test("ten simultaneous workshop connections keep five pairs through toggles and 
   }
   now += TURN_DURATION;
   await until(()=>clients.every(c=>c.owner!==original.get(c.id)!.owner));
+  now += TURN_DURATION;
+  await until(()=>clients.every(c=>c.gifts.length===1 && c.gifts[0]===c.partner));
   assert.ok(paired());
 });
 
@@ -347,6 +374,8 @@ test("a gift arriving during a local edit cannot overflow the library or replace
   const {mergeReceivedAssets}=await import("../lib/content-limits.ts");
   const world=setup().members.get("a")!.document;
   world.assets=Array.from({length:249},(_,i)=>({...world.assets[0],id:`existing-${i}`}));
+  const receipt={...world.assets[0],id:"old-receipt",received:true};
+  assert.equal(mergeReceivedAssets(world,[receipt]).world.assets.length,249);
   const gifts=[{...world.assets[0],id:"new-a",text:"first"},{...world.assets[0],id:"new-b",text:"second"}];
   const first=mergeReceivedAssets(world,gifts);
   assert.equal(first.world.assets.length,250);assert.deepEqual(first.accepted,[gifts[0]]);

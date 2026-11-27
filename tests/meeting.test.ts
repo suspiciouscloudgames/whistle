@@ -195,6 +195,38 @@ test("gift identity survives a new room while edited and deleted gifts remain lo
   assert.equal(mergeReceivedAssets(merged,incoming).world.assets.some(a=>a.id===gift),false);
 });
 
+test("visitors receive revisions and removal of placed images and sounds while keeping their own copies",()=>{
+  const room=setup(["a","b","c","d"]);
+  use(room,"b",author(room,"a"));
+  open(room,"b","a");
+  const source=structuredClone(room.members.get("a")!.document);
+  const base={shape:"sphere" as const,color:"#223344",solid:false};
+  const image={...base,id:"drawing",name:"그림",image:"data:image/png;base64,AQID"};
+  const audio={...base,id:"recording",name:"소리",sound:{data:"data:audio/wav;base64,AQID",duration:1,volume:.4,mode:"loop" as const}};
+  source.assets.push(image,audio);
+  for(const asset of [image,audio])source.objects.push({id:asset.id,asset:asset.id,x:6,z:10,rotation:0,scale:1});
+  publishMeeting(room,"a",source,[],false,true);
+  const gifts=meetingView(room,"b").materials.filter(asset=>asset.image || asset.sound);
+  assert.equal(gifts.length,2);
+  const visitor=structuredClone(room.members.get("b")!.document);
+  visitor.assets.push(...gifts);
+  publishMeeting(room,"b",visitor,gifts.map(asset=>asset.id),false,true);
+  image.image="data:image/png;base64,BAUG";
+  audio.sound={...audio.sound,data:"data:audio/wav;base64,BwgJ",volume:.8};
+  publishMeeting(room,"a",source,[],false,true);
+  const view=meetingView(room,"b");
+  assert.equal(view.world.assets.find(asset=>asset.id==="a:drawing")?.image,image.image);
+  assert.deepEqual(view.world.assets.find(asset=>asset.id==="a:recording")?.sound,audio.sound);
+  assert.equal(view.ownWorld.assets.find(asset=>asset.id==="received-drawing")?.image,gifts[0].image);
+  assert.equal(view.ownWorld.assets.find(asset=>asset.id==="received-recording")?.sound?.volume,.4);
+  source.objects=source.objects.filter(object=>object.asset!=="drawing" && object.asset!=="recording");
+  source.assets=source.assets.filter(asset=>asset.id!=="drawing" && asset.id!=="recording");
+  publishMeeting(room,"a",source,[],false,true);
+  assert.ok(!meetingWorld(room,"b").objects.some(object=>["a:drawing","a:recording"].includes(object.asset)));
+  assert.equal(meetingView(room,"b").ownWorld.assets.filter(asset=>asset.image || asset.sound).length,2);
+  assert.deepEqual(meetingView(room,"c").materials,[]);
+});
+
 test("meeting URLs support secure external relays and reject mixed content",()=>{
   const page=new URL("https://example.com/whistle/?meeting=room");
   assert.equal(meetingSocketURL(page).href,"wss://example.com/whistle/meeting");

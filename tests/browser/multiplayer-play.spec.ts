@@ -41,6 +41,7 @@ async function instrument(page: Page) {
       if (mode === 'play') {
         globalThis.__peerTrailLine = scene.getObjectByName('peer-movement-trail');
         globalThis.__playCamera = camera;
+        globalThis.__playScene = scene;
         globalThis.__drawPlayFrame = () => { pixelRenderer.render(scene, camera); return renderer.domElement; };
       }
       globalThis.__testPlayer = player;
@@ -323,6 +324,19 @@ for (const slow of [false, true]) test(`crossing, floor loss, whistle and safe d
     await b.page.getByRole('button', { name: '휘슬', exact: true }).click();
     await expect.poll(async () => (await state(a.page)).whistles.length).toBe(2);
     await a.page.bringToFront(); await a.page.keyboard.press('Escape');
+    await a.page.getByRole('button', {name:'장면 제목 편집',exact:true}).click();
+    const revised = '연결한 뒤 바꾼 문장';
+    await a.page.getByRole('textbox',{name:'텍스트 입력',exact:true}).fill(revised);
+    await a.page.getByRole('dialog').getByRole('button',{name:'저장',exact:true}).click();
+    await expect.poll(async () => (await savedWorld(a.page)).assets.find(asset => asset.text === revised)?.image).toBeTruthy();
+    const original = (await savedWorld(a.page)).assets.find(asset => asset.text === revised)!;
+    const remoteId = (await state(a.page)).view.id + ':' + original.id;
+    await b.page.waitForFunction(({remoteId,revised,image}) => {
+      const scene = (window as any).__playScene;
+      return scene.children.some((model: any) => model.userData.asset === remoteId &&
+        model.userData.signature.includes(revised) && model.userData.image === image);
+    }, {remoteId,revised,image:original.image}, {timeout:15_000});
+    expect((await savedWorld(b.page)).assets.filter(asset => asset.received && asset.text === '상대의 장면')).toHaveLength(1);
     await a.page.getByRole('button', { name: '타일 지우기', exact: true }).click();
     await a.page.locator(`[data-cell="${gate.z * 12 + 11}"]`).click({ position: { x: 2, y: 2 } });
     await b.page.waitForFunction(() => (window as any).__mp.view.reset.reason === 'floor', undefined, { timeout: 30_000 });

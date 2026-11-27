@@ -16,13 +16,13 @@ import {
 } from "../../lib/terrain.ts";
 
 
-export function makeTerrain(world: World, structures: Structure[], derivedEnvironment?: Environment, cache?:ReturnType<typeof createTerrainCache>) {
+export function makeTerrain(world: World, structures: Structure[], derivedEnvironment?: Environment, cache?:ReturnType<typeof createTerrainCache>, compactOverview = false) {
   const group = new THREE.Group(),
     wind = { value: 0 };
   const environment = derivedEnvironment ?? deriveEnvironment(world, structures);
   const toScene = (n: number) => n * 2 - world.size + 1;
   const random = randomSequence(world.terrain?.seed ?? 0);
-  const ground = makeGround(world, environment, cache);
+  const ground = makeGround(world, environment, cache, compactOverview ? 6 : 12);
   const geometry = ground.geometry;
   group.add(...ground.group.children.slice());
   if (!world.terrain?.floating && world.terrain?.tiles.some((t) => isHole(t))) {
@@ -151,16 +151,20 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
     z: number;
     appearance: ReturnType<typeof stoneAppearance>;
   }[] = [];
-  const hasScatter = world.terrain?.tiles.some(
-    (t) => !isGap(t) && t.surface === "rough",
-  );
-  const attempts = hasScatter
-    ? Math.min(world.size * world.size * 750, 90000)
-    : 0;
+  // Only the four sampling cells touching a rough tile can produce a pebble.
+  const stride = world.size + 1;
+  const roughCorners = new Uint8Array(stride * stride);
+  world.terrain?.tiles.forEach((tile, index) => {
+    if (isGap(tile) || tile.surface !== "rough") return;
+    const cell = Math.floor(index / world.size) * stride + index % world.size;
+    roughCorners[cell] = roughCorners[cell + 1] = roughCorners[cell + stride] = roughCorners[cell + stride + 1] = 1;
+  });
+  const attempts = roughCorners.includes(1) ? Math.min(world.size * world.size * 750, 90000) : 0;
   for (let n = 0; n < attempts; n++) {
     const x = random() * world.size - 0.5,
-      z = random() * world.size - 0.5,
-      sample = terrainSample(world, x, z);
+      z = random() * world.size - 0.5;
+    if (!roughCorners[(Math.floor(z) + 1) * stride + Math.floor(x) + 1]) continue;
+    const sample = terrainSample(world, x, z, false);
     if (sample.coverage < 0.6) continue;
     const onStairs = structures.some(
       (s) =>
@@ -172,7 +176,7 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
     if (sample.weights.rough > 0.5 && random() < 0.035 && pebbles.length < 900)
       pebbles.push({
         x: toScene(x),
-        y: sample.height,
+        y: terrainSample(world, x, z).height,
         z: toScene(z),
         appearance: stoneAppearance(world.terrain?.seed ?? 0, x, z),
       });
@@ -233,7 +237,7 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
     for (let shape = 0; shape < STONE_SHAPES.length; shape++) {
       const batch = pebbles.filter(r => r.appearance.shape === shape);
       if (!batch.length) continue;
-      const rockGeometry = stoneGeometry(shape);
+      const rockGeometry = stoneGeometry(shape, compactOverview);
       const stoneVariants = new Float32Array(batch.length * 3);
       rockGeometry.setAttribute("stoneVariant", new THREE.InstancedBufferAttribute(stoneVariants, 3));
       const rocks = new THREE.InstancedMesh(rockGeometry, stoneMaterial, batch.length);
@@ -258,7 +262,7 @@ export function makeTerrain(world: World, structures: Structure[], derivedEnviro
   }
   const stoneSurfaces = makeStoneSurfaces(world, group.children.filter(child => child.name === "scattered-stones") as THREE.InstancedMesh[]);
   group.add(stoneSurfaces.group);
-  const paperField = makeWindField(world, structures, environment, geometry);
+  const paperField = makeWindField(world, structures, environment, geometry, compactOverview);
   group.add(paperField.group);
   const generated = makeEnvironment(world, environment, wind, geometry);
   group.add(generated.group);

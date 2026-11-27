@@ -32,6 +32,13 @@ test("sustained slow rendering reduces resolution within bounds and recovers wit
   assert.equal(run(60, 25), 1);
 });
 
+test("the overview can lower its resolution at a frame rate that still suits play", () => {
+  const overview = createAdaptiveResolution(1, 45), play = createAdaptiveResolution(1);
+  for (let i = 0; i < 160; i++) { overview.sample(25); play.sample(25); }
+  assert.equal(overview.sample(25), .75);
+  assert.equal(play.sample(25), 1);
+});
+
 test("brief stalls and hidden time do not lower resolution or carry an unfinished slow sample", () => {
   const resolution = createAdaptiveResolution(1);
   for (let i = 0; i < 60; i++) assert.equal(resolution.sample(50), 1);

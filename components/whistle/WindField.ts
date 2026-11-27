@@ -8,9 +8,9 @@ import { makeGrass, addGrassWind } from "./Grass.ts";
 import { projectSurfaceImage } from "./SurfaceProjection.ts";
 import { softenEdges } from "./Atmosphere.ts";
 
-export function makeWindField(world: World, structures: Structure[], environment: Environment, ground: THREE.BufferGeometry) {
+export function makeWindField(world: World, structures: Structure[], environment: Environment, ground: THREE.BufferGeometry, compactOverview = false) {
   const time = { value: 0 };
-  const group = makeGrass(world, structures, ground, time, environment);
+  const group = makeGrass(world, structures, ground, time, environment, compactOverview);
   const strength = group.userData.grassMotion ?? { value: 1 };
   const wind = { time, strength };
   const grass = group.getObjectByName("grass-tufts") as THREE.InstancedMesh | undefined;

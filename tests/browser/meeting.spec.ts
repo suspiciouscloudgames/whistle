@@ -129,6 +129,44 @@ function observe(page: Page) {
   return { view: () => view!, errors, whistles };
 }
 
+test("a dropped connection unlocks both editors and restores the pair and offline edits", async ({browser,baseURL}) => {
+  const a = await newPlayer(browser,baseURL), b = await newPlayer(browser,baseURL);
+  const first = observe(a), second = observe(b);
+  await b.addInitScript(() => {
+    const NativeSocket = window.WebSocket;
+    window.WebSocket = class extends NativeSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url,protocols);
+        if (String(url).includes("/whistle/meeting?"))
+          window.addEventListener("drop-meeting-connection",() => this.close(),{once:true});
+      }
+    };
+  });
+  const room = `?meeting=network-loss-${Date.now()}`;
+  await a.goto(room); await ready(a);
+  await b.goto(room); await ready(b);
+  await expect(b.locator(".workspace [data-turn]")).toHaveAttribute("data-turn","other");
+  const original = second.view().recipients[0];
+  await b.context().setOffline(true);
+  await b.evaluate(() => window.dispatchEvent(new Event("drop-meeting-connection")));
+  for (const page of [a,b]) {
+    await expect(page.locator(".presence-number")).toHaveText("1");
+    await expect(page.locator(".workspace [data-turn]")).toHaveCount(0);
+  }
+  const before = (await savedWorld(b)).terrain!.tiles[126].height;
+  await b.getByRole("button",{name:"높이기",exact:true}).click();
+  await b.locator('[data-cell="126"]').click({position:{x:2,y:2}});
+  await expect.poll(async () => (await savedWorld(b)).terrain!.tiles[126].height).toBeGreaterThan(before);
+  await b.context().setOffline(false);
+  await ready(b);
+  await expect.poll(() => second.view().recipients).toEqual([original]);
+  await expect.poll(() => second.view().ownWorld.terrain!.tiles[126].height).toBeGreaterThan(before);
+  await expect(a.locator(".presence-number")).toHaveText("2");
+  await expect(b.locator(".workspace [data-turn]")).toHaveAttribute("data-turn","other");
+  expect(first.view().recipients).toEqual([second.view().id]);
+  expect([...first.errors,...second.errors]).toEqual([]);
+});
+
 test("browser storage restores my world and edited gifts after both the browser and relay restart",async({browser,baseURL})=>{
   const profile=await mkdtemp(join(tmpdir(),"whistle-browser-world-"));
   let port=0;

@@ -274,13 +274,13 @@ test("water is inset into a carved bed with a dry bank, never a floating sheet",
   w.terrain!.tiles[i].surface = "plain";
   assert.equal(terrainSample(w, 4, 4).height, -LEVEL);
 });
-test("water mesh shore meets its terrain at both zero and depressed elevations", () => {
+for (const compactOverview of [false, true]) test(`water mesh shore meets its terrain at zero and depressed elevations in ${compactOverview ? "preview" : "play"}`, () => {
   for (const [height, cellX, cellZ] of [[0, 4, 4], [-1, 4, 4], [0, 0, 0], [-1, 0, 0]]) {
     const w = empty(),
       i = cellZ * w.size + cellX;
     w.terrain!.tiles[i] = { height, surface: "slick", hole: false };
     w.terrain!.tiles[i + 1] = { height, surface: "slick", hole: false };
-    const terrain = makeTerrain(w, deriveStructures(w));
+    const terrain = makeTerrain(w, deriveStructures(w), undefined, undefined, compactOverview);
     terrain.group.updateMatrixWorld(true);
     const water = terrain.group.getObjectByName(
       "generated-water",

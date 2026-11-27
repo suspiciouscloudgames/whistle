@@ -90,7 +90,8 @@ export function makePixelRenderer(renderer: THREE.WebGLRenderer, daylight = {val
           const previous = surface.onBeforeCompile;
           const key = surface.customProgramCacheKey();
           const structure = object.name === "abstract-ladders" || object.name === "lightweight-structures";
-          surface.customProgramCacheKey = () => key + (structure ? "|pixel-mrt-structure" : "|pixel-mrt");
+          const variant = [kind, structure, object.name === "world-horizon", !!surface.userData.floatingGround, stone && !!surface.userData.sourceText];
+          surface.customProgramCacheKey = () => key + "|pixel-mrt-" + variant.join("-");
           surface.onBeforeCompile = (shader, gl) => {
             previous.call(surface, shader, gl);
             shader.uniforms.pixelKeepColor = preserve.color;

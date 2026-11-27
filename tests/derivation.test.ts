@@ -62,6 +62,29 @@ for (const name of Object.keys(terrainFixtures())) {
   });
 }
 
+test("the compact overview keeps every grass tuft and stone at its play position", () => {
+  const world = terrainFixtures().mixed, derivation = createWorldDeriver()(world);
+  const full = makeTerrain(world, derivation.structures, derivation.environment);
+  const preview = makeTerrain(world, derivation.structures, derivation.environment, undefined, true);
+  const instances = (group: THREE.Group) => {
+    const meshes: THREE.InstancedMesh[] = [];
+    group.traverse(object => {
+      if (object instanceof THREE.InstancedMesh && ["grass-tufts", "scattered-stones"].includes(object.name)) meshes.push(object);
+    });
+    return meshes;
+  };
+  try {
+    const detailed = instances(full.group), compact = instances(preview.group);
+    assert.deepEqual(compact.map(m => m.name), detailed.map(m => m.name));
+    assert.ok(compact.some(m => m.name === "grass-tufts") && compact.some(m => m.name === "scattered-stones"));
+    compact.forEach((mesh, i) => {
+      assert.deepEqual(mesh.instanceMatrix.array, detailed[i].instanceMatrix.array);
+      assert.deepEqual(mesh.instanceColor?.array, detailed[i].instanceColor?.array);
+      assert.ok(mesh.geometry.index!.count < detailed[i].geometry.index!.count);
+    });
+  } finally { disposeTerrain(full.group); disposeTerrain(preview.group); }
+});
+
 test("shared environment calculations preserve placement feedback through edits and undo", () => {
   let before = terrainFixtures().mixed;
   const derive = createWorldDeriver();

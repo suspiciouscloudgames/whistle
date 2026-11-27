@@ -50,7 +50,8 @@ type Member = MeetingPeer & {
   reset: MeetingReset;
   ready: boolean;
   ports: [NeighborSlot | null, NeighborSlot | null];
-  materials: Map<string, Asset>; received: Set<string>; shared: Map<string, string>; published: Asset[];
+  materials: Map<string, Asset>; materialRevision: number; received: Set<string>; shared: Map<string, string>;
+  published: {originalId:string; gift:Asset}[];
   lastWhistle: number; resumeKey?: string;
 };
 export type MeetingRoom = {
@@ -282,7 +283,7 @@ export function addMeetingMember(room:MeetingRoom,id:string,now=Date.now(),await
     const document=createMeetingWorld((room.seed+Math.imul(room.members.size,0x9e3779b9))>>>0);
     member={id,slot:0,online:true,playing:false,document,revision:0,ready:false,ports:[null,null],
       reset:{id:0,player:{...meetingGlobal(0,MEETING_START),yaw:0,grounded:true}},
-      player:{...meetingGlobal(0,MEETING_START),yaw:0,grounded:true},materials:new Map(),received:new Set(),shared:new Map(),published:[],lastWhistle:-Infinity};
+      player:{...meetingGlobal(0,MEETING_START),yaw:0,grounded:true},materials:new Map(),materialRevision:0,received:new Set(),shared:new Map(),published:[],lastWhistle:-Infinity};
     room.members.set(id,member);
   }
   if (!member.online) {
@@ -367,19 +368,23 @@ export function authoredMaterialCount(world:World,received:ReadonlySet<string>) 
 function snapshotMaterials(member: Member) {
   const placed = new Set(member.document.objects.map(o => o.asset));
   member.published = member.document.assets.filter(a => placed.has(a.id) && contentKind(a) && !a.received && !member.materials.has(a.id))
-    .map(({ prompt: _, ...asset }) => structuredClone(asset));
+    .map(({id, prompt, originalImage, ...asset}) => ({
+      originalId:id, gift:{...asset,id:`received-${id}`,received:true,...(asset.sound && {sound:{...asset.sound}})},
+    }));
+}
+function materialReceipt(asset: Asset): Asset {
+  return {id:asset.id,name:asset.name,shape:asset.shape,color:asset.color,solid:false,received:true};
 }
 function shareMeetingMaterials(room:MeetingRoom) {
   for(const pair of room.turns)for(const id of pair.members){
     const source=room.members.get(id)!,recipient=room.members.get(pair.members.find(peer=>peer!==id)!)!;
     if(!source.online||!recipient.online||!source.ready||!recipient.ready)continue;
-    for(const asset of source.published){
-      if(!contentKind(asset)||asset.received||source.materials.has(asset.id))continue;
-      let sharedId=source.shared.get(asset.id);
-      if(!sharedId){sharedId=`received-${asset.id}`;source.shared.set(asset.id,sharedId);}
-      if(recipient.materials.has(sharedId))continue;
-      const {originalImage:_,...copy}=asset;
-      recipient.materials.set(sharedId,{...copy,id:sharedId,received:true,...(copy.sound?{sound:{...copy.sound}}:{})});
+    for(const {originalId,gift} of source.published){
+      source.shared.set(originalId,gift.id);
+      const previous=recipient.materials.get(gift.id),acknowledged=recipient.received.has(gift.id);
+      if(previous===gift || previous && acknowledged)continue;
+      recipient.materials.set(gift.id,acknowledged?materialReceipt(gift):gift);
+      recipient.materialRevision++;
     }
   }
 }
@@ -417,7 +422,7 @@ export function publishMeeting(room:MeetingRoom,id:string,input:unknown,received
   let acknowledged=false;
   for(const assetId of new Set([...received,...world.receivedMaterialIds??[],...world.assets.filter(a=>a.received).map(a=>a.id)]))if(!member.received.has(assetId)){
     member.received.add(assetId);acknowledged=true;const asset=member.materials.get(assetId);
-    if(asset)member.materials.set(assetId,{id:asset.id,name:asset.name,shape:asset.shape,color:asset.color,solid:false,received:true});
+    if(asset)member.materials.set(assetId,materialReceipt(asset));
   }
   if(member.ready&&JSON.stringify(member.document)===JSON.stringify(world)&&!acknowledged)return turnChanged;
   member.document=world;member.ready=true;member.revision++;room.revision++;
@@ -498,10 +503,11 @@ export function whistleMeeting(room:MeetingRoom,id:string,now=Date.now()):Meetin
   m.lastWhistle=now;return {id:`whistle-${++room.sequence}`,from:id,x:m.player.x,z:m.player.z};
 }
 export function meetingPresence(room:MeetingRoom,id:string):MeetingPresence {
+  const partner=meetingPartner(room,id);
   const related=new Set([id,...meetingNeighbors(room,id),...room.members.get(id)!.ports.flatMap(p=>p?[p.peer]:[])]);
   const peers:MeetingPeer[]=[];
   for(const m of room.members.values()){
-    const player=positionFor(room,m.id,id);
+    const player=m.id===id||m.id===partner?positionFor(room,m.id,id):undefined;
     if(related.has(m.id)||m.online&&m.playing&&player)peers.push({id:m.id,slot:0,online:m.online,playing:m.playing,...(player?{player}:{})});
   }
   return {peers,canWhistle:canWhistleMeeting(room,id),onlineCount:[...room.members.values()].filter(m=>m.online).length,turn:meetingTurn(room,id)};
@@ -511,10 +517,11 @@ export function moveMeeting(room:MeetingRoom,id:string,player:MeetingPosition,pl
   if(resetId!==undefined&&resetId!==member.reset.id)return false;
   if(![player.x,player.z,player.yaw].every(Number.isFinite)||player.x<-.4||player.z<-.4||player.x>MEETING_SIZE-.6||player.z>MEETING_SIZE-.6)return false;
   const owner=meetingOwner(Math.round(player.x),Math.round(player.z));
-  if(owner>=0&&!layout(room,id).some(p=>p.slot===owner))return false;
+  if(owner>0&&!layout(room,id).some(p=>p.slot===owner))return false;
   if(player.grounded&&!supported(meetingWorld(room,id),player.x,player.z))return false;
   member.playing=playing;member.player={x:player.x,z:player.z,yaw:player.yaw,pitch:player.pitch??0,grounded:player.grounded,falling:!!player.falling};
-  let changed=syncNeighborSlots(room);
+  const retiredFooting=member.document.connectionFootings?.some(f=>f.built&&member.ports.some(p=>p?.key===f.id&&!p.active));
+  let changed=!!retiredFooting&&onOwnMeetingFloor(member.document,player)&&syncNeighborSlots(room);
   if(changed)discoverMeetingConnections(room);
   if(playing&&player.grounded&&!player.falling)member.ports.forEach((p,i)=>{
     if(!p)return;

@@ -38,7 +38,7 @@ export function useMeetingRoom(key: string) {
   const lastPosition = useRef<MeetingPosition | null>(null);
   const lastSent = useRef<{ player: MeetingPosition; playing: boolean; reset: number } | null>(null);
   const lastPresence = useRef<MeetingPresence | null>(null);
-  const codec = useRef(createMeetingCodec());
+  const codec = useRef<ReturnType<typeof createMeetingCodec> | null>(null);
   const resetId = useRef(0);
   const listeners = useRef(new Set<(event: MeetingWhistle) => void>());
   useEffect(() => {
@@ -63,11 +63,12 @@ export function useMeetingRoom(key: string) {
       lastSent.current = null;
       lastPresence.current = null;
       connecting = setTimeout(() => ws.close(), 15_000);
-      codec.current = createMeetingCodec();
+      const connectionCodec = createMeetingCodec();
+      codec.current = connectionCodec;
       ws.onmessage = event => {
         if (stopped || socket.current !== ws) return;
         let message: MeetingMessage | null;
-        try { message = codec.current.decode<MeetingMessage>(event.data); }
+        try { message = connectionCodec.decode<MeetingMessage>(event.data); }
         catch (error) { setError((error as Error).message); return; }
         if (!message) return;
         if (message.type === "error") {
@@ -101,6 +102,8 @@ export function useMeetingRoom(key: string) {
         if (stopped || socket.current !== ws) return;
         peerTrail.clear();
         online.current=false;
+        lastPresence.current=null;
+        setPresence({peers:[],canWhistle:false});
         setView(current=>retireOfflineMeetingFootings(current,lastPosition.current??current.reset.player));
         setStatus("offline");
         if (event.code === 4001) setError("다른 창에서 이 세계를 열었습니다.");
@@ -115,7 +118,7 @@ export function useMeetingRoom(key: string) {
     return () => { stopped = true; clearTimeout(retry); clearTimeout(connecting); socket.current?.close(); socket.current = null; online.current=false; peerTrail.clear(); };
   }, [key,session,enabled,peerTrail]);
   const send = useCallback((message: object) => {
-    if (socket.current?.readyState === WebSocket.OPEN) {
+    if (socket.current?.readyState === WebSocket.OPEN && codec.current) {
       try { for (const frame of codec.current.encode(message)) socket.current.send(frame); return true; }
       catch (error) { setError((error as Error).message); }
     }

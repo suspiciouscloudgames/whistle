@@ -1,6 +1,6 @@
 import { ARCHIVE_FILE_LIMIT, ARCHIVE_PATH, archiveIdPattern, type ArchivePage } from "./archive-protocol";
 import { archiveWriterKey } from "./browser-world";
-import { MAX_LIBRARY_SIZE } from "./content-limits";
+import { contentKind, MAX_LIBRARY_SIZE } from "./content-limits";
 import { upgradeTerrain } from "./terrain";
 import { uid, validateWorld } from "./world";
 
@@ -41,6 +41,22 @@ export async function openArchivedWorld(id: string, signal: AbortSignal) {
   const writer = await archiveWriterKey().catch(() => undefined);
   const result = await request(ARCHIVE_PATH + "/" + id, { signal, headers: writer ? { Authorization: "Bearer " + writer } : {} });
   const world = upgradeTerrain(validateWorld(await result.json(), MAX_LIBRARY_SIZE));
-  if (world.workshop && result.headers.get("X-Whistle-Archive-Owner") !== "1") world.workshop.id = uid();
+  if (result.headers.get("X-Whistle-Archive-Owner") !== "1") {
+    if (world.workshop) world.workshop.id = uid();
+    const received = new Set(world.receivedMaterialIds);
+    const ids = new Map<string,string>();
+    for (const asset of world.assets) {
+      if (asset.received || received.has(asset.id) || !(asset.prompt || contentKind(asset))) continue;
+      const id = uid();
+      ids.set(asset.id,id);
+      asset.id=id;
+    }
+    for (const object of world.objects) object.asset=ids.get(object.asset) ?? object.asset;
+    for (const rule of world.rules) {
+      if (rule.subject!=="*") rule.subject=ids.get(rule.subject) ?? rule.subject;
+      if (rule.source!=="*") rule.source=ids.get(rule.source) ?? rule.source;
+      rule.replacement=ids.get(rule.replacement) ?? rule.replacement;
+    }
+  }
   return world;
 }

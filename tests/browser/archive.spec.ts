@@ -104,6 +104,13 @@ test("local saves stay private and archive saves update the owner's entry and le
   objects.clear();
   const original = createMeetingWorld(123);
   original.title = "갈대의 세계";
+  const title = original.assets.find(asset=>asset.prompt?.title)!;
+  title.text = original.title;
+  const keepsake = {...title,id:"received-keepsake",prompt:undefined,received:true,text:"받은 기호"};
+  original.assets.push(keepsake);
+  original.receivedMaterialIds = [keepsake.id];
+  original.rules.push({id:"replace-title",enabled:false,subject:title.id,source:"*",replacement:title.id,
+    token:"표시",result:"표시",trigger:"approach",radius:2,action:"change"});
   await page.addInitScript(world => localStorage.setItem("whistle.world.v2", JSON.stringify(world)), original);
   await enter(page, "archive-owner");
   await openArchive(page);
@@ -123,7 +130,7 @@ test("local saves stay private and archive saves update the owner's entry and le
   expect(objects.get(key)?.body.equals(file)).toBe(true);
   await page.reload();
   await openArchive(page);
-  await page.getByRole("button", { name: /갈대의 세계/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /갈대의 세계/ }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect((await upload(page)).ok()).toBe(true);
   expect([...objects.keys()]).toEqual([key]);
@@ -143,10 +150,16 @@ test("local saves stay private and archive saves update the owner's entry and le
       }
     }
     await openArchive(guest);
-    await guest.getByRole("button", { name: /갈대의 세계/ }).click();
+    await guest.getByRole("dialog").getByRole("button", { name: /갈대의 세계/ }).click();
     await expect(guest.getByRole("dialog")).toHaveCount(0);
     await expect.poll(async () => (await savedWorld(guest)).title).toBe(original.title);
-    expect((await savedWorld(guest)).workshop!.id).not.toBe(original.workshop!.id);
+    const guestWorld = await savedWorld(guest);
+    expect(guestWorld.workshop!.id).not.toBe(original.workshop!.id);
+    const guestTitle = guestWorld.assets.find(asset=>asset.text===title.text)!;
+    expect(guestTitle.id).not.toBe(title.id);
+    expect(guestWorld.objects.some(object=>object.asset===guestTitle.id)).toBe(true);
+    expect(guestWorld.rules.find(rule=>rule.id==="replace-title")).toMatchObject({subject:guestTitle.id,source:"*",replacement:guestTitle.id});
+    expect(guestWorld.assets.find(asset=>asset.id===keepsake.id)?.received).toBe(true);
     await guest.getByRole("button", { name: "높이기", exact: true }).click();
     await guest.locator('[data-cell="0"]').click();
     const fork = await download(guest);

@@ -12,7 +12,7 @@ export function renderQuality(
   } as const;
 }
 
-export function createAdaptiveResolution(maximum: number) {
+export function createAdaptiveResolution(maximum: number, lowerBelowFps = 28) {
   const minimum = Math.min(maximum, .5), step = maximum / 4;
   let ratio = maximum, elapsed = 0, frames = 0, slow = 0, fast = 0;
   const reset = () => { elapsed = frames = slow = fast = 0; };
@@ -28,8 +28,8 @@ export function createAdaptiveResolution(maximum: number) {
       if (elapsed < 2000) return ratio;
       const fps = frames * 1000 / elapsed;
       elapsed = frames = 0;
-      slow = fps < 28 ? slow + 1 : 0;
-      fast = fps > 50 ? fast + 1 : 0;
+      slow = fps < lowerBelowFps ? slow + 1 : 0;
+      fast = fps > Math.max(50, lowerBelowFps + 10) ? fast + 1 : 0;
       if (slow >= 2) { ratio = Math.max(minimum, ratio - step); slow = fast = 0; }
       else if (fast >= 10) { ratio = Math.min(maximum, ratio + step); slow = fast = 0; }
       return ratio;

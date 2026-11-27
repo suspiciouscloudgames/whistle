@@ -8,7 +8,7 @@ import type { Environment } from "../../lib/environment.ts";
 type Chunk = {key:string; ground:THREE.BufferGeometry; bank:THREE.BufferGeometry};
 export const createTerrainCache = () => new Map<string,Chunk>();
 type Bounds = {x:number; z:number; length:number};
-function buildGround(world:World, environment:Environment, hasWaterTiles:boolean, bounds?:Bounds) {
+function buildGround(world:World, environment:Environment, hasWaterTiles:boolean, samplesPerTile:number, bounds?:Bounds) {
   const group = new THREE.Group();
   const toScene = (n:number) => n * 2 - world.size + 1;
   const palette = {
@@ -20,7 +20,7 @@ function buildGround(world:World, environment:Environment, hasWaterTiles:boolean
 
 
   const extent = world.size + 3;
-  const resolution = bounds ? bounds.length + 2 : (world.size + 3) * 12,
+  const resolution = bounds ? bounds.length + 2 : (world.size + 3) * samplesPerTile,
     stride = resolution + 1;
   const positions: number[] = [],
     colors: number[] = [],
@@ -31,8 +31,8 @@ function buildGround(world:World, environment:Environment, hasWaterTiles:boolean
   const hasPonds = environment.ponds.length > 0;
   for (let z = 0; z <= resolution; z++)
     for (let x = 0; x <= resolution; x++) {
-      const gx = (x + (bounds ? bounds.x - 1 : 0)) / 12 - 2,
-        gz = (z + (bounds ? bounds.z - 1 : 0)) / 12 - 2,
+      const gx = (x + (bounds ? bounds.x - 1 : 0)) / samplesPerTile - 2,
+        gz = (z + (bounds ? bounds.z - 1 : 0)) / samplesPerTile - 2,
         sample = terrainSample(world, gx, gz, hasWaterTiles);
       positions.push(toScene(gx), sample.height, toScene(gz));
       coverage.push(sample.coverage);
@@ -146,7 +146,7 @@ function buildGround(world:World, environment:Environment, hasWaterTiles:boolean
     if (Number.isInteger(x) && Number.isInteger(z)) return z * stride + x;
     const key = `${x}:${z}`, found = refined.get(key);
     if (found !== undefined) return found;
-    const gx = (x + (bounds ? bounds.x - 1 : 0)) / 12 - 2, gz = (z + (bounds ? bounds.z - 1 : 0)) / 12 - 2, sample = terrainSample(world, gx, gz, hasWaterTiles), i = coverage.length;
+    const gx = (x + (bounds ? bounds.x - 1 : 0)) / samplesPerTile - 2, gz = (z + (bounds ? bounds.z - 1 : 0)) / samplesPerTile - 2, sample = terrainSample(world, gx, gz, hasWaterTiles), i = coverage.length;
     positions.push(toScene(gx), sample.height, toScene(gz)); colors.push(1, 1, 1); coverage.push(sample.coverage);
     refined.set(key, i); return i;
   };
@@ -288,8 +288,8 @@ function buildGround(world:World, environment:Environment, hasWaterTiles:boolean
       by = positions[b * 3 + 1],
       bz = positions[b * 3 + 2];
     if (bounds) {
-      const x = ((ax + bx) / 2 + world.size - 1) * 6 + 24;
-      const z = ((az + bz) / 2 + world.size - 1) * 6 + 24;
+      const x = (((ax + bx) / 2 + world.size - 1) / 2 + 2) * samplesPerTile;
+      const z = (((az + bz) / 2 + world.size - 1) / 2 + 2) * samplesPerTile;
       if (x < bounds.x || z < bounds.z || x >= bounds.x + bounds.length || z >= bounds.z + bounds.length) continue;
     }
     if (
@@ -344,16 +344,16 @@ function buildGround(world:World, environment:Environment, hasWaterTiles:boolean
   return {group,geometry};
 }
 
-export function makeGround(world:World, environment:Environment, cache?:ReturnType<typeof createTerrainCache>) {
+export function makeGround(world:World, environment:Environment, cache?:ReturnType<typeof createTerrainCache>, samplesPerTile = 12) {
   const hasWaterTiles = world.terrain?.tiles.some(tile => tile.surface === "slick") ?? false;
-  if (!cache || !world.terrain?.floating || world.size <= 12) return buildGround(world,environment,hasWaterTiles);
+  if (!cache || !world.terrain?.floating || world.size <= 12) return buildGround(world,environment,hasWaterTiles,samplesPerTile);
   const grounds:THREE.BufferGeometry[] = [], banks:THREE.BufferGeometry[] = [];
-  const length = 48, total = (world.size + 3) * 12;
+  const length = 4 * samplesPerTile, total = (world.size + 3) * samplesPerTile;
   for (let z = 0; z < total; z += length) for (let x = 0; x < total; x += length) {
-    const local:unknown[] = [world.size,world.terrain.seed];
+    const local:unknown[] = [world.size,world.terrain.seed,samplesPerTile];
     // Water influence and coverage extend beyond the chunk, including its normal halo.
-    for (let zz = Math.max(0,z/12-5); zz <= Math.min(world.size-1,(z+length)/12+1); zz++)
-      for (let xx = Math.max(0,x/12-5); xx <= Math.min(world.size-1,(x+length)/12+1); xx++) {
+    for (let zz = Math.max(0,z/samplesPerTile-5); zz <= Math.min(world.size-1,(z+length)/samplesPerTile+1); zz++)
+      for (let xx = Math.max(0,x/samplesPerTile-5); xx <= Math.min(world.size-1,(x+length)/samplesPerTile+1); xx++) {
         const i = zz*world.size+xx;
         local.push(world.terrain.tiles[i],environment.cells[i].water,environment.cells[i].hole);
       }
@@ -361,7 +361,7 @@ export function makeGround(world:World, environment:Environment, cache?:ReturnTy
     let chunk = cache.get(id);
     if (chunk?.key !== key) {
       chunk?.ground.dispose(); chunk?.bank.dispose();
-      const result = buildGround(world,environment,hasWaterTiles,{x,z,length});
+      const result = buildGround(world,environment,hasWaterTiles,samplesPerTile,{x,z,length});
       const ground = result.group.getObjectByName("continuous-ground") as THREE.Mesh<THREE.BufferGeometry,THREE.Material>;
       const bank = result.group.getObjectByName("terrain-bank") as THREE.Mesh<THREE.BufferGeometry,THREE.Material>;
       chunk = {key,ground:ground.geometry,bank:bank.geometry};

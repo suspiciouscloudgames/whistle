@@ -11,12 +11,12 @@ import { MEETING_PATH, createMeetingRoom, addMeetingMember, meetingView, meeting
   disconnectMeetingMember, leaveMeetingMember, reconcileMeeting, MEETING_RECONNECT_MS, meetingWorld, meetingPartner, type MeetingRoom, type MeetingMessage } from "../../lib/meeting.ts";
 
 export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: number; reconnectMs?: number} = {}) {
-  type Entry = {room:MeetingRoom; sockets:Map<string,WebSocket>; touched:number; queue:Promise<void>; presenceDirty?:boolean};
+  type Entry = {room:MeetingRoom; sockets:Map<string,WebSocket>; touched:number; queue:Promise<void>; pendingPresence:Set<string>};
   const rooms = new Map<string, Entry>();
   let closing: Promise<void> | undefined;
   const getRoom = (key:string) => {
     let entry = rooms.get(key);
-    if (!entry) { entry = {room:createMeetingRoom(undefined,options.reconnectMs),sockets:new Map(),touched:Date.now(),queue:Promise.resolve()};rooms.set(key,entry); }
+    if (!entry) { entry = {room:createMeetingRoom(undefined,options.reconnectMs),sockets:new Map(),touched:Date.now(),queue:Promise.resolve(),pendingPresence:new Set()};rooms.set(key,entry); }
     return entry;
   };
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16*1024*1024, perMessageDeflate: false });
@@ -30,15 +30,16 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
   };
   type Delivered = {world: ReturnType<typeof meetingWorld>; partner?: string; reset: number; materials: number; received: number; ready: boolean; end?: number};
   const delivered = new WeakMap<WebSocket, Delivered>();
-  const broadcast = (entry: Entry, state: boolean, recipients?:Set<string>) => {
-    if(!recipients)entry.presenceDirty=false;
-    for (const [id, socket] of entry.sockets) {
-      if(recipients&&!recipients.has(id))continue;
+  const broadcast = (entry: Entry, state: boolean, recipients:Iterable<string> = entry.sockets.keys()) => {
+    if(state)entry.pendingPresence.clear();
+    for (const id of recipients) {
+      const socket = entry.sockets.get(id);
+      if(!socket)continue;
       const presence = meetingPresence(entry.room, id);
       if (state) {
         const member = entry.room.members.get(id)!;
         const current = {world: meetingWorld(entry.room,id), partner: meetingPartner(entry.room,id), reset: member.reset.id,
-          materials: member.materials.size, received: member.received.size, ready: member.ready, end: presence.turn?.endsAt};
+          materials: member.materialRevision, received: member.received.size, ready: member.ready, end: presence.turn?.endsAt};
         const last = delivered.get(socket);
         if (!last || current.world !== last.world || current.partner !== last.partner || current.reset !== last.reset ||
             current.materials !== last.materials || current.received !== last.received || current.ready !== last.ready || current.end !== last.end) {
@@ -85,6 +86,7 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
         if (++messages > 1024) { ws.close(1008, "Too many messages"); return; }
         entry.queue = entry.queue.then(() => {
         if (entry.sockets.get(id) !== ws) return;
+        const revision = entry.room.revision;
         try {
           const message = codecs.get(ws)!.decode<Record<string, any>>(data.toString());
           if (!message || typeof message !== "object") return;
@@ -108,9 +110,20 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
           }
           else if (message.type === "position" && message.player && typeof message.playing === "boolean" &&
             typeof message.player.grounded === "boolean" && (message.player.pitch === undefined || Number.isFinite(message.player.pitch))) {
-            if(entry.sockets.get(id)!==ws)return;
+            const member = entry.room.members.get(id)!;
+            const previousPlayer = member.player, wasPlaying = member.playing;
             changed = moveMeeting(entry.room, id, message.player, message.playing, message.resetId ?? 0);
-            if(changed)broadcast(entry,true);else entry.presenceDirty=true;
+            if(changed)broadcast(entry,true);
+            else if(member.player !== previousPlayer) {
+              if(member.playing !== wasPlaying) {
+                for(const peer of entry.sockets.keys())entry.pendingPresence.add(peer);
+              } else {
+                entry.pendingPresence.add(id);
+                const partner = meetingPartner(entry.room,id);
+                if(partner && entry.room.links.some(([from,to]) => from === id && to === partner || from === partner && to === id))
+                  entry.pendingPresence.add(partner);
+              }
+            }
             return;
           }
           if (changed) broadcast(entry,true);
@@ -118,7 +131,7 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
           const message = error instanceof Error ? error.message : "연결 데이터를 저장하지 못했습니다.";
           const rejected = message === TURN_HINT || message === TURN_TILE_HINT;
           send(ws, { type: "error", message, ...(rejected ? {world:entry.room.members.get(id)!.document} : {}) });
-          if(rejected)broadcast(entry,true);
+          if(rejected || entry.room.revision!==revision)broadcast(entry,true);
         }
         });
       });
@@ -136,7 +149,10 @@ export function attachMeetingRelay(server: EventEmitter, options: {cleanupMs?: n
   };
   server.on("upgrade", upgrade);
   const presenceTick=setInterval(()=>{
-    for(const entry of rooms.values())if(entry.presenceDirty)broadcast(entry,false);
+    for(const entry of rooms.values())if(entry.pendingPresence.size) {
+      broadcast(entry,false,entry.pendingPresence);
+      entry.pendingPresence.clear();
+    }
   },80);
   presenceTick.unref();
   const cleanup = setInterval(() => {

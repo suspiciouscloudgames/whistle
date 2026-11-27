@@ -27,7 +27,7 @@ export function mergeReceivedAssets(world: World, incoming: Asset[]) {
   const received=new Set(world.receivedMaterialIds??world.assets.filter(a=>a.received).map(a=>a.id));
   for (const asset of incoming) {
     if (ids.has(asset.id)||received.has(asset.id)) { accepted.push(asset);received.add(asset.id);continue; }
-    if (assets.length >= MAX_LIBRARY_SIZE || received.size >= 10000) continue;
+    if (!contentKind(asset) || assets.length >= MAX_LIBRARY_SIZE || received.size >= 10000) continue;
     assets.push(asset);ids.add(asset.id);received.add(asset.id);accepted.push(asset);
   }
   return {world:{...world,assets,...(received.size?{receivedMaterialIds:[...received]}:{})},accepted};

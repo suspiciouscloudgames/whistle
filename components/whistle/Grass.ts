@@ -51,6 +51,7 @@ export function makeGrass(
   ground: THREE.BufferGeometry,
   wind: { value: number },
   environment: Environment = deriveEnvironment(world, structures),
+  compactOverview = false,
 ) {
   const group = new THREE.Group();
   group.name = "grassland";
@@ -72,6 +73,15 @@ export function makeGrass(
     const shade = (patchColor.r * .2126 + patchColor.g * .7152 + patchColor.b * .0722) * .5;
     coverColors.push(shade, shade, shade);
     positions.setY(i, positions.getY(i) + .025);
+  }
+  if (compactOverview) {
+    const groundIndices = ground.index!;
+    const covered: number[] = [];
+    for (let i = 0; i < groundIndices.count; i += 3) {
+      const a = groundIndices.getX(i), b = groundIndices.getX(i + 1), c = groundIndices.getX(i + 2);
+      if (coverage[a] > 0 || coverage[b] > 0 || coverage[c] > 0) covered.push(a, b, c);
+    }
+    cover.setIndex(covered);
   }
   cover.setAttribute("grassCover", new THREE.Float32BufferAttribute(coverage, 1));
   cover.setAttribute("color", new THREE.Float32BufferAttribute(coverColors, 3));
@@ -117,7 +127,7 @@ export function makeGrass(
   understory.receiveShadow = true;
   group.add(understory);
 
-  const bladeGeometry = makeGrassGeometry(random);
+  const bladeGeometry = makeGrassGeometry(random, compactOverview ? 3 : 7);
   const roots: { x: number; z: number; height: number }[] = [],
     budget = 4200,
     spacing = Math.max(0.095, Math.sqrt(area / 3900));
@@ -209,7 +219,7 @@ export function makeGrass(
   return group;
 }
 
-export function makeGrassGeometry(random: () => number) {
+export function makeGrassGeometry(random: () => number, segments = 7) {
   const verts: number[] = [],
     colors: number[] = [],
     uvs: number[] = [],
@@ -230,8 +240,8 @@ export function makeGrassGeometry(random: () => number) {
     const rootX = dx * random() * 0.065,
       rootZ = dz * random() * 0.065,
       offset = bends.length;
-    for (let segment = 0; segment <= 7; segment++) {
-      const t = segment / 7;
+    for (let segment = 0; segment <= segments; segment++) {
+      const t = segment / segments;
       for (const side of [-1, 1]) {
         const taper =
           Math.sin((t * 0.9 + 0.1) * Math.PI) * (0.7 + 0.3 * (1 - t));
@@ -246,7 +256,7 @@ export function makeGrassGeometry(random: () => number) {
         color.copy(dark).lerp(light, t * 0.8);
         colors.push(color.r, color.g, color.b);
       }
-      if (segment < 7) {
+      if (segment < segments) {
         const a = offset + segment * 2;
         indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
       }
@@ -254,7 +264,7 @@ export function makeGrassGeometry(random: () => number) {
   }
   const lowOffset = bends.length;
   const c = Math.cos(.8), s = Math.sin(.8);
-  for (let i = 0; i < 4 * 16; i++) {
+  for (let i = 0; i < 4 * (segments + 1) * 2; i++) {
     const x = verts[i * 3], z = verts[i * 3 + 2];
     verts.push((c * x - s * z) * 1.25, verts[i * 3 + 1] * .7, (s * x + c * z) * 1.25);
     normals.push(c * normals[i * 3] - s * normals[i * 3 + 2], normals[i * 3 + 1], s * normals[i * 3] + c * normals[i * 3 + 2]);
@@ -262,7 +272,7 @@ export function makeGrassGeometry(random: () => number) {
     uvs.push(uvs[i * 2], uvs[i * 2 + 1]);
     colors.push(colors[i * 3], colors[i * 3 + 1], colors[i * 3 + 2]);
   }
-  for (let i = 0; i < 4 * 7 * 6; i++) indices.push(indices[i] + lowOffset);
+  for (let i = 0; i < 4 * segments * 6; i++) indices.push(indices[i] + lowOffset);
   const bladeGeometry = new THREE.BufferGeometry();
   bladeGeometry.setAttribute(
     "position",

@@ -2,8 +2,8 @@ import * as THREE from "three";
 
 export const STONE_SHAPES = ["pebble", "weathered"] as const;
 
-export function stoneGeometry(shape: number) {
-  const geometry = new THREE.SphereGeometry(1, 24, 16);
+export function stoneGeometry(shape: number, compactOverview = false) {
+  const geometry = new THREE.SphereGeometry(1, compactOverview ? 12 : 24, compactOverview ? 8 : 16);
   const positions = geometry.getAttribute("position");
   const faces = [
     new THREE.Vector3(.87, .3, .39).normalize(),
