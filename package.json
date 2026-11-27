@@ -26,6 +26,7 @@
     "audio:engine": "node scripts/build-audio-engine.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1178.0",
     "@breezystack/lamejs": "1.2.7",
     "react": "19.2.6",
     "react-dom": "19.2.6",

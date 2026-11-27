@@ -81,7 +81,7 @@ test("prompts rotate text, image and sound one at a time and stop at the materia
   assert.equal(w.workshop!.pending.length,1);
 });
 
-test("a prompt waits through missing floors, holes and nearby floors until a spaced floor exists",()=>{
+test("a prompt waits through holes and adjacent floors, then uses a floor two tiles away",()=>{
   const w=createMeetingWorld(2),title=w.assets.find(emptySymbol)!;
   for(const tile of w.terrain!.tiles)tile.void=true;
   fill(w,title);
@@ -89,12 +89,12 @@ test("a prompt waits through missing floors, holes and nearby floors until a spa
   assert.equal(w.workshop!.pending.length,1);
   w.terrain!.tiles[0]={surface:"plain",height:0,hole:true};
   w.terrain!.tiles[8*w.size+5]={surface:"rough",height:0};
-  w.terrain!.tiles[7*w.size+7]={surface:"soft",height:0};
+  w.terrain!.tiles[8*w.size+6]={surface:"soft",height:0};
   refillSymbols(w);
   assert.equal(w.assets.filter(emptySymbol).length,0);
-  w.terrain!.tiles[9*w.size+2]={surface:"plain",height:0};refillSymbols(w);
+  w.terrain!.tiles[9*w.size+3]={surface:"plain",height:0};refillSymbols(w);
   assert.equal(w.assets.filter(emptySymbol).length,1);
-  assert.deepEqual([w.objects.at(-1)!.x,w.objects.at(-1)!.z],[2,9]);
+  assert.deepEqual([w.objects.at(-1)!.x,w.objects.at(-1)!.z],[3,9]);
   assert.equal(w.workshop!.pending.length,0);
   w.terrain!.tiles[0]={surface:"soft",height:0};refillSymbols(w);
   assert.equal(w.assets.filter(emptySymbol).length,1);
@@ -126,7 +126,7 @@ test("each new prompt uses the nearest spaced floor to the symbol just filled",(
   w.objects.push({id:"picture",asset:"received-image",x:0,z:0,rotation:0,scale:1},
     {id:"sound",asset:"received-sound",x:11,z:0,rotation:0,scale:1},
     {id:"title-copy",asset:title.id,x:11,z:9,rotation:0,scale:1});
-  for(const [x,z] of [[0,1],[10,0],[5,8],[0,7],[5,3],[11,6],[2,9],[5,6]])w.terrain!.tiles[z*w.size+x]={surface:"plain",height:0};
+  for(const [x,z] of [[0,1],[10,0],[5,8],[5,7],[0,7],[5,3],[11,6],[2,9],[5,6]])w.terrain!.tiles[z*w.size+x]={surface:"plain",height:0};
   fill(w,title);
   const placed=w.objects.at(-1)!;
   assert.deepEqual([placed.x,placed.z],[5,6]);

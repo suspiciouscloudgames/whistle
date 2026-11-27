@@ -19,8 +19,8 @@
 .meeting-map-approach.disconnected{border-color:#111;background:#111;filter:none}
 .presence-count[data-connected="true"] .presence-mark{background:var(--meeting-lemon);border-color:#777}
 
-.turn-status{display:flex;flex-direction:column;gap:4px;margin:4px 0 0;width:100%;min-width:0}
-.turn-label{font-size:10px;line-height:1.4;color:#555}
+.turn-status{display:flex;flex-direction:column;gap:4px;margin:0 0 4px;width:100%;min-width:0}
+.turn-label{font-size:11px;line-height:1.4;color:#555}
 .turn-track{height:6px;width:100%;overflow:hidden;background:#d4d4d4;border-radius:3px;box-shadow:0 0 0 1px #b5b5b5}
 .turn-fill{height:100%;background:#fff;transform-origin:left center;transition:transform .1s linear}
 .other-turn .turn-fill{background:#f3ef91}

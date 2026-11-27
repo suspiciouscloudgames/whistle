@@ -56,17 +56,20 @@ test("old shared links do not replace the document or its undo history", async (
   await expect(page.locator('[data-cell="0"]')).toHaveAccessibleName(/높이 0/);
 });
 
-test("audio failures explain retry without blocking editing", async ({ page }) => {
-  let attempts = 0;
-  await page.route(/\/audio\/engine\/pd4web\.js(\?|$)/, async route => { attempts++; await route.abort(); });
+test("audio retries silently while editing stays available", async ({ page }) => {
+  await page.route(/\/audio\/engine\/pd4web\.js(\?|$)/, route => route.abort());
   await openWorld(page, terrainFixtures().flat);
   await page.getByRole("button", { name: "높이기", exact: true }).click();
-  await page.locator('[data-cell="0"]').click();
-  await expect.poll(() => attempts).toBeGreaterThan(0);
-  await expect(page.locator(".toast")).toContainText("다음 클릭에서 다시 시도합니다");
+  for (const height of [1, 2]) {
+    const failure = page.waitForEvent("console", message => message.text().includes("[Whistle:Audio] 오류"));
+    const cell = page.locator('[data-cell="0"]');
+    await cell.click();
+    await failure;
+    await expect(cell).toHaveAccessibleName(new RegExp(`높이 ${height}`));
+    await expect(page.locator(".toast")).toHaveCount(0);
+  }
   await page.getByRole("button", { name: "장면 제목 입력", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.locator(".toast")).toContainText("다음 클릭에서 다시 시도합니다");
 });
 
 test("legacy terrain migration retains its single undo checkpoint", async ({ page }) => {

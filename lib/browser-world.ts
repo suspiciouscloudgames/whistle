@@ -25,6 +25,25 @@ async function read<T>(key:string):Promise<T | undefined> {
     request.onerror=()=>reject(request.error);
   });
 }
+export async function archiveWriterKey(): Promise<string> {
+  const db = await database();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction("worlds", "readwrite");
+    const store = transaction.objectStore("worlds");
+    const slot = JSON.stringify(["archive", "writer"]);
+    const request = store.get(slot);
+    let key: string;
+    request.onsuccess = () => {
+      key = request.result;
+      if (typeof key === "string" && /^[0-9a-f]{64}$/.test(key)) return;
+      key = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
+      store.put(key, slot);
+    };
+    transaction.oncomplete = () => resolve(key);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
 export function browserWorldStore(room:string,tab:string):BrowserWorldStore {
   const key=JSON.stringify(["document",tab]),latest=JSON.stringify(["document","latest"]);
   return {

@@ -15,12 +15,13 @@ type Props = {
   onExit: () => void;
   onNew: () => void;
   onImport: () => void;
+  onArchive: () => void;
   onSave: () => void;
   notify: (message: string) => void;
 };
 
 export function EditorToolbar({
-  playing, saveStatus, onlineCount, multiplayerEnabled, onToggleMultiplayer, connectionStatus, makeButton, onEnter, onExit, onNew, onImport, onSave, notify,
+  playing, saveStatus, onlineCount, multiplayerEnabled, onToggleMultiplayer, connectionStatus, makeButton, onEnter, onExit, onNew, onImport, onArchive, onSave, notify,
 }: Props) {
   const { language, setLanguage, t } = useLanguage();
   const count = multiplayerEnabled ? onlineCount : 1;
@@ -63,6 +64,7 @@ export function EditorToolbar({
       </nav>
       <div className="header-tools">
         <div className="display-tools">
+          <button className="archive-menu" onClick={onArchive}>{t("아카이브")}</button>
           <div className="language-switch" role="group" aria-label={t("언어")}>
             <button
               lang="ko"
@@ -91,9 +93,12 @@ export function EditorToolbar({
           </button>
           <button
             onClick={onSave}
+            aria-label={t("파일 저장")}
+            aria-describedby="archive-save-note"
             aria-description={t(saveStatus)}
           >
             {t("파일 저장")}
+            <small id="archive-save-note" className="archive-save-note">{t("아카이브에 공개")}</small>
           </button>
         </div>
       </div>

@@ -5,14 +5,17 @@ import { resolve, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { attachMeetingRelay } from "./meeting/relay.ts";
 import { attachPortalRelay } from "./portals/relay.ts";
+import { createArchiveApi } from "./archive.ts";
 
+const handleArchive = createArchiveApi();
 const root = fileURLToPath(new URL("../dist/", import.meta.url));
 const mime: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".wasm": "application/wasm", ".mp3": "audio/mpeg" };
 const server = createServer(async (request, response) => {
   response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   response.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-  if (!["GET", "HEAD"].includes(request.method ?? "")) { response.writeHead(405).end(); return; }
   try {
+    if (await handleArchive(request, response)) return;
+    if (!["GET", "HEAD"].includes(request.method ?? "")) { response.writeHead(405).end(); return; }
     const url = new URL(request.url || "/", "http://localhost");
     const path = decodeURIComponent(url.pathname);
     if (path === "/whistle" || path === "/whistle/" || path === "/whistle/index.html") {

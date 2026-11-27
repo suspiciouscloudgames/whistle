@@ -62,9 +62,8 @@ export function SoundMaker({ asset, defaultName, onSave, onClose, onDelete, dele
     const audio = preview.current;
     if (!audio) return;
     if (!audio.paused) { audio.pause(); return; }
-    const generation = request.current;
     try { await audio.play(); }
-    catch { if (generation === request.current) showError("사운드를 재생할 수 없습니다."); }
+    catch (error) { console.warn("[Whistle:Audio] 미리 듣기 오류", error); }
   };
   return <Dialog className="maker-dialog" title={t("사운드")} onClose={onClose}>
     <div className="sound-editor">

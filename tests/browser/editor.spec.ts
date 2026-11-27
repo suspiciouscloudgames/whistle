@@ -47,6 +47,52 @@ test("toolbar and palette keep language, dialogs, and file selection connected",
   await expect(page.locator('[data-cell="0"]')).toHaveAccessibleName(/높이 2/);
 });
 
+test.describe("small touch screens", () => {
+  test.use({ hasTouch: true });
+
+  test("play controls stay above browser chrome in portrait and landscape", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.getByRole("button", { name: "플레이", exact: true }).tap();
+    const controls = page.locator(".touch-controls");
+    const crouch = page.getByRole("button", { name: "기어가기", exact: true });
+    for (const viewport of [{ width: 320, height: 568 }, { width: 568, height: 320 }]) {
+      await page.setViewportSize(viewport);
+      for (const chromeHeight of [48, 0]) {
+        const visibleHeight = viewport.height - chromeHeight;
+        await page.evaluate(height => {
+          const visual = window.visualViewport!;
+          Object.defineProperty(visual, "height", { configurable: true, value: height });
+          visual.dispatchEvent(new Event("resize"));
+        }, visibleHeight);
+        await expect(page.locator(".play-shell")).toHaveCSS("height", `${visibleHeight}px`);
+        const bounds = await controls.boundingBox();
+        expect(bounds!.y).toBeGreaterThanOrEqual(0);
+        expect(visibleHeight - (bounds!.y + bounds!.height)).toBeCloseTo(10);
+        if (chromeHeight) {
+          await crouch.tap();
+          await expect(crouch).toHaveAttribute("aria-pressed", viewport.width === 320 ? "true" : "false");
+        }
+      }
+    }
+  });
+
+  test("play follows window height when the visual viewport API is unavailable", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.evaluate(() => {
+      Object.defineProperty(window, "visualViewport", { value: undefined });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 520 });
+    });
+    await page.getByRole("button", { name: "플레이", exact: true }).tap();
+    const shell = page.locator(".play-shell");
+    await expect(shell).toHaveCSS("height", "520px");
+    await page.evaluate(() => {
+      Object.defineProperty(window, "innerHeight", { value: 568 });
+      window.dispatchEvent(new Event("resize"));
+    });
+    await expect(shell).toHaveCSS("height", "568px");
+  });
+});
+
 for (const [name, viewport] of Object.entries({
   desktop: { width: 1280, height: 900 },
   mobile: { width: 390, height: 844 },

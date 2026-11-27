@@ -12,7 +12,7 @@ const TAB_STORAGE = "whistle.world.tab.v1";
 type Options = {
   world: World;
   onLoad: (world: World, beforeUpgrade: World) => void;
-  onImport: (world: World) => void;
+  onImport: (world: World) => string | void;
   notify: (message: string) => void;
   enabled?: boolean;
   libraryLimit?: number;
@@ -103,7 +103,8 @@ export function useWorldPersistence({ world, onLoad, onImport, notify, enabled =
     if (!file) return;
     try {
       const imported = upgradeTerrain(validateWorld(JSON.parse(await file.text()),libraryLimit));
-      onImport(imported);
+      const reason = onImport(imported);
+      if (reason) { notify(reason); return; }
       resumeAutosave();
     } catch (e) {
       notify(userErrorMessage(e, "파일을 읽을 수 없습니다."));

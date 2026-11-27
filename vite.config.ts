@@ -1,4 +1,5 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin, type PreviewServer, type ViteDevServer } from "vite";
+import { createArchiveApi } from "./scripts/archive.ts";
 import react from "@vitejs/plugin-react";
 import { portalRelayPlugin } from "./scripts/portals/vite";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -105,12 +106,21 @@ const audioFolder = (): Plugin => ({
   },
 });
 
+function archiveMiddleware(server: ViteDevServer | PreviewServer) {
+  const handle = createArchiveApi({ ...loadEnv(server.config.mode, server.config.envDir, "R2_"), ...process.env });
+  server.middlewares.use((request, response, next) => {
+    handle(request, response).then(handled => { if (!handled) next(); }, next);
+  });
+}
+
 export default defineConfig({
   base: "/whistle/",
   define: { "import.meta.env.VITE_AUDIO_REVISION": JSON.stringify(audioRevision) },
   server: { headers: isolation, watch: { ignored: ["**/output/**", "**/.whistle-data/**"] } },
   preview: { headers: isolation },
-  plugins: [react(), audioFolder(), portalRelayPlugin()],
+  plugins: [react(), audioFolder(), portalRelayPlugin(), {
+    name: "whistle-archive", configureServer: archiveMiddleware, configurePreviewServer: archiveMiddleware,
+  }],
   resolve: { alias: { "@": fileURLToPath(new URL(".", import.meta.url)) } },
   build: {
     rolldownOptions: {

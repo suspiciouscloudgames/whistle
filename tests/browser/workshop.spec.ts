@@ -83,12 +83,13 @@ test("new symbols wait for spaced floors and survive undo, redo and reload witho
   await page.getByRole("button",{name:"바닥",exact:true}).click();
   await page.locator('[data-cell="114"]').click();
   await expect(page.locator('[data-empty-symbol="true"]')).toHaveCount(0);
-  await page.locator('[data-cell="110"]').click();
-  await expect(page.locator('[data-cell="110"] [data-symbol-kind="image"][data-empty-symbol="true"]')).toBeVisible();
+  const floor = page.locator('[data-cell="111"]');
+  await floor.click();
+  await expect(floor.locator('[data-symbol-kind="image"][data-empty-symbol="true"]')).toBeVisible();
   await page.getByRole("button",{name:"되돌리기",exact:true}).click();
   await expect(page.locator('[data-empty-symbol="true"]')).toHaveCount(0);
   await page.getByRole("button",{name:"다시 실행",exact:true}).click();
-  await expect(page.locator('[data-cell="110"] [data-empty-symbol="true"]')).toBeVisible();
+  await expect(floor.locator('[data-empty-symbol="true"]')).toBeVisible();
   await page.locator('[data-cell="0"]').click();
   await expect(page.locator('[data-empty-symbol="true"]')).toHaveCount(1);
   await expect.poll(async()=>(await savedWorld(page)).objects.length).toBe(2);
@@ -222,7 +223,7 @@ test("a drag stops at three new tiles while editing and reusing those tiles stay
   } finally { await ca.close(); await cb.close(); }
 });
 
-test("the countdown advances without repeatedly rendering the idle editor",async({browser,baseURL})=>{
+test("the countdown stays above the map and advances without repeatedly rendering the idle editor",async({browser,baseURL})=>{
   const ca=await browser.newContext({baseURL}),cb=await browser.newContext({baseURL});
   const a=await ca.newPage(),b=await cb.newPage();
   await a.route(/\/app\/page\.tsx(?:\?|$)/,async route=>{
@@ -233,8 +234,16 @@ test("the countdown advances without repeatedly rendering the idle editor",async
   });
   try {
     const url=`?meeting=countdown-${Date.now()}`;
+    await b.setViewportSize({width:390,height:844});
     await a.goto(url);await ready(a);await b.goto(url);await ready(b);
     await expect(b.locator('.workspace [data-turn]')).toHaveAttribute("data-turn","other");
+    for (const page of [a, b]) {
+      await expect(page.getByRole("progressbar", {name:"차례 남은 시간"})).toBeVisible();
+      const bar = await page.locator(".turn-status").boundingBox();
+      const map = await page.locator(".world-grid").boundingBox();
+      expect(bar!.y + bar!.height).toBeLessThanOrEqual(map!.y);
+      expect(bar!.width).toBeCloseTo(map!.width, 0);
+    }
     await a.waitForTimeout(1200);
     const before=await a.evaluate(()=>({renders:(globalThis as any).__editorRenders as number,
       scale:document.querySelector<HTMLElement>('.workspace .turn-fill')!.style.transform}));

@@ -1,11 +1,8 @@
-import type { World } from "./world";
-export function downloadWorld(w: World) {
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(w, null, 2)], { type: "application/json" }),
-  );
+export function downloadWorld(file: Blob, title: string) {
+  const url = URL.createObjectURL(file);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${w.title || "Whistle"}.whistle.json`;
+  a.download = `${title || "Whistle"}.whistle.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

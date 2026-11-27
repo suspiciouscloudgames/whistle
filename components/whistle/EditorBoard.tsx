@@ -85,6 +85,7 @@ export function EditorBoard({
           </svg>
         </button>
       </div>
+      {turnBar}
       <div className="canvas-area">
         <PaintGrid
           size={world.size}
@@ -208,7 +209,6 @@ export function EditorBoard({
           }}
         />
       </div>
-      {turnBar}
     </section>
   );
 }

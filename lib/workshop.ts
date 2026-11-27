@@ -6,7 +6,8 @@ export const WORKSHOP_MATERIAL_LIMIT = 6;
 export const TURN_HINT = "배치는 내 차례에 할 수 있어요. 편집은 언제든 할 수 있어요.";
 const kinds: ContentKind[] = ["text", "image", "sound"];
 const names = { text: "텍스트", image: "이미지", sound: "사운드" };
-const MIN_SYMBOL_DISTANCE = 3;
+const PREFERRED_SYMBOL_DISTANCE = 3;
+const MIN_SYMBOL_DISTANCE = 2;
 
 export function emptySymbol(asset?: Asset) {
   return !!asset?.prompt && !contentKind(asset);
@@ -44,11 +45,12 @@ export function refillSymbols(world: World) {
   const pending = state.pending[0];
   if (!pending || (!waiting && (authored >= WORKSHOP_MATERIAL_LIMIT || world.assets.length >= MAX_LIBRARY_SIZE)) || world.objects.length >= 250) return;
   const distanceSquared = (a: { x: number; z: number }, b: { x: number; z: number }) => (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
-  const nearest = Array.from({ length: world.size ** 2 }, (_, i) => ({ x: i % world.size, z: Math.floor(i / world.size) }))
+  const floors = Array.from({ length: world.size ** 2 }, (_, i) => ({ x: i % world.size, z: Math.floor(i / world.size) }))
     .filter(p => world.terrain?.tiles[p.z * world.size + p.x] && !isGap(world.terrain.tiles[p.z * world.size + p.x]) &&
       !(p.x === world.start.x && p.z === world.start.z))
-    .sort((a, b) => distanceSquared(a, pending) - distanceSquared(b, pending) || a.z - b.z || a.x - b.x)
-    .find(p => world.objects.every(o => distanceSquared(p, o) >= MIN_SYMBOL_DISTANCE ** 2));
+    .sort((a, b) => distanceSquared(a, pending) - distanceSquared(b, pending) || a.z - b.z || a.x - b.x);
+  const findFloor = (distance: number) => floors.find(p => world.objects.every(o => distanceSquared(p, o) >= distance ** 2));
+  const nearest = findFloor(PREFERRED_SYMBOL_DISTANCE) ?? findFloor(MIN_SYMBOL_DISTANCE);
   if (!nearest) return;
   let id = waiting?.id;
   if (!id) {

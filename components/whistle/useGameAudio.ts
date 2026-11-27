@@ -38,10 +38,7 @@ const tilesOf = (world: World) => world.terrain?.tiles ?? flatTiles.get(world.si
  *   사운드스케이프(층별 영역 패치들) ──┼─→ 마스터 게인(음소거 fade) → 리미터 → 출력
  *   배치한 녹음 사운드(Pd 슬롯, 10배로 늘림) ┘
  */
-/** 소리 켜기를 이만큼(ms) 기다려도 안 되면 알린다(계속 기다리고, 다음 터치·키에서 켜진다: unlockAudio). */
-const RESUME_NOTICE_MS = 3000;
-
-async function createGameMix(onBlocked: () => void) {
+async function createGameMix() {
   const started = performance.now();
   const hint = latencyHint();
   const engine = await openEngine(BASE, { latencyHint: hint });
@@ -49,8 +46,7 @@ async function createGameMix(onBlocked: () => void) {
   let master: GainNode | undefined;
   try {
     // 엔진은 터치가 끝난 뒤에 열리므로, 폰 브라우저는 이 resume()을 다음 터치까지 미룬다.
-    const notice = setTimeout(onBlocked, RESUME_NOTICE_MS);
-    try { await context.resume(); } finally { clearTimeout(notice); }
+    await context.resume();
     master = context.createGain();
     const limiter = context.createDynamicsCompressor();
     limiter.threshold.value = -3;
@@ -123,9 +119,7 @@ export type GameAudioDebug = {
   placed: ReturnType<ReturnType<typeof createPlacedSounds>["snapshot"]>;
 };
 
-export function useGameAudio(notify: (message: string) => void) {
-  const report = useRef(notify);
-  report.current = notify;
+export function useGameAudio() {
   const controller = useRef<ReturnType<typeof createGameAudio> | null>(null);
   const recordings = useRef<ReturnType<typeof createPlacedSounds> | null>(null);
   const soundscape = useRef<GameSoundscape | null>(null);
@@ -136,16 +130,15 @@ export function useGameAudio(notify: (message: string) => void) {
   const enabled = useRef(false);
   const paused = useRef(false);
   const api = useMemo(() => {
-    const failed = () => report.current("오디오를 시작하지 못했어요. 다음 클릭에서 다시 시도합니다.");
     const get = () => controller.current ??= createGameAudio(
       async () => {
-        const mix = await createGameMix(failed);
+        const mix = await createGameMix();
         mixRef.current = mix;
         recordings.current = createPlacedSounds(mix.context, () => {}, mix.master, mix.playSound);
         soundscape.current = mix.game;
         return mix.session;
       },
-      (error) => { console.warn("[Whistle:Audio] 오류", error); failed(); },
+      (error) => console.warn("[Whistle:Audio] 오류", error),
     );
     const quiet = () => soundscape.current?.stop();
     return {

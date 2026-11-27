@@ -16,7 +16,8 @@ import { emptySymbol, initializeWorkshop, completeSymbol, refillSymbols } from "
 import { uncountedTiles, TURN_TILE_LIMIT } from "@/lib/turn-tiles";
 import { TurnBar, useWorkshopTurn } from "@/components/whistle/TurnBar";
 import type { TerrainTool } from "@/lib/tile";
-import { downloadWorld } from "@/lib/sharing";
+import { ArchiveDialog } from "@/components/whistle/ArchiveDialog";
+import { useArchiveSave } from "@/components/whistle/useArchiveSave";
 import { useWorldDocument } from "@/components/whistle/useWorldDocument";
 import { SoundMaker } from "@/components/whistle/SoundMaker";
 import { contentKind, contentLimitMessage, MAX_CONTENT_COUNT, MAX_LIBRARY_SIZE, validateContentCounts } from "@/lib/content-limits";
@@ -71,6 +72,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     [showMaker, setShowMaker] = useState(false),
     [editingAsset, setEditingAsset] = useState<Asset | undefined>(),
     [newDialog, setNewDialog] = useState(false),
+    [archiveOpen, setArchiveOpen] = useState(false),
     [playKey, setPlayKey] = useState(0);
   const makeButton = useRef<HTMLButtonElement>(null);
   const hasPlayed = useRef(false);
@@ -87,6 +89,21 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
       if (playing) document.body.style.overflow = overflow;
     };
   }, [playing]);
+  const fitPlayShell = useCallback((shell: HTMLElement | null) => {
+    if (!shell) return;
+    const viewport = window.visualViewport;
+    const fit = () => {
+      if (viewport && viewport.scale !== 1) return;
+      shell.style.height = `${viewport?.height || window.innerHeight}px`;
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    viewport?.addEventListener("resize", fit);
+    return () => {
+      window.removeEventListener("resize", fit);
+      viewport?.removeEventListener("resize", fit);
+    };
+  }, []);
   const [movementMode, setMovementMode] = useState<"walk" | "crouch">("walk");
   const [spawn, setSpawn] = useState<Player>(initialPlayer);
   const [surface, setSurface] = useState<Surface>("soft"),
@@ -103,7 +120,8 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 4200);
   }, []);
-  const audio = useGameAudio(notify);
+  const audio = useGameAudio();
+  const archiveSave = useArchiveSave(notify);
   const whistle = useMeetingWhistle(meeting, playing, player, audio.whistle);
   const meetingReset = useRef(meeting.view.reset.id);
   useLayoutEffect(() => {
@@ -201,12 +219,12 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     return true;
   };
   const handleImport = (imported: World) => {
-    if (!canPlaceNow()) return;
-    if(imported.size!==12){notify("12×12 맵을 사용합니다.");return;}
-    if (authoredMaterialCount(imported, sharedIds) > MEETING_MATERIAL_LIMIT) { notify(MEETING_MATERIAL_MESSAGE); return; }
+    if (!canPlaceNow()) return "내 차례에 세계를 불러올 수 있습니다.";
+    if (imported.size !== 12) return "12×12 맵을 사용합니다.";
+    if (authoredMaterialCount(imported, sharedIds) > MEETING_MATERIAL_LIMIT) return MEETING_MATERIAL_MESSAGE;
     imported.connectionFootings=[];
     const next = initializeWorkshop(fixMeetingStart(imported));
-    if (!allowTurnTiles(next)) return;
+    if (!allowTurnTiles(next)) return "이 세계는 현재 차례의 타일 한도를 초과합니다.";
     receivedMaterials.current=new Set([...(imported.receivedMaterialIds??[]),...imported.assets.filter(a=>a.received).map(a=>a.id)]);
     updateWorld(next);
     setSelected(null); setPlacingAsset(null); setShowMaker(false);
@@ -321,10 +339,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
     if (meeting.status === "online") meeting.send({type:"publish",world:portalWorld(getWorld()),received:[...receivedMaterials.current]});
     setShowMaker(false); setEditingAsset(undefined); setSelected(null); setPlacingAsset(null);
   };
-  const saveFile = () => {
-    try { downloadWorld(world); }
-    catch { notify("저장할 수 없습니다."); }
-  };
+  const saveFile = () => archiveSave.saveFile(getWorld());
   const deleteSymbol = () => {
     if (!editingAsset) return;
     if (!canPlaceNow()) return;
@@ -374,11 +389,22 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
         onExit={exit}
         onNew={() => setNewDialog(true)}
         onImport={() => file.current?.click()}
+        onArchive={() => setArchiveOpen(true)}
         onSave={saveFile}
         notify={notify}
       />
+      {archiveSave.failure && !playing && <div className="archive-save-error" role="alert">
+        <span>{t(archiveSave.failure.save.local ? "로컬 파일만 저장했습니다." : "파일을 저장하지 못했습니다.")} {t(archiveSave.failure.reason)}</span>
+        {archiveSave.retry && <button onClick={archiveSave.retry}>{t("아카이브 저장 재시도")}</button>}
+        <button onClick={archiveSave.dismiss}>{t("닫기")}</button>
+      </div>}
+      {archiveOpen && <ArchiveDialog onClose={() => setArchiveOpen(false)} onOpen={world => {
+        const reason = handleImport(world);
+        if (!reason) resumeAutosave();
+        return reason;
+      }} />}
       {playing && (
-        <section className="play-shell">
+        <section className="play-shell" ref={fitPlayShell}>
           <Scene
             key={playKey}
             world={activeWorld}
@@ -506,6 +532,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
           <div className="new-actions">
             <button onClick={saveFile}>
               {t("현재 파일 저장")}
+              <small className="archive-save-note">{t("아카이브에 공개")}</small>
             </button>
             <button className="primary" onClick={newWorld}>
               {t("다시 시작")}
@@ -516,7 +543,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
       {saveStatus.includes("부족") && (
         <div className="save-error" role="alert">
           {t("저장 공간이 부족합니다.")}{" "}
-          <button onClick={saveFile}>{t("파일 저장")}</button>
+          <button onClick={saveFile}>{t("파일 저장")} · {t("아카이브에 공개")}</button>
         </div>
       )}
       {toast && (
