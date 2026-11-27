@@ -375,6 +375,7 @@ export default function Home({meeting}:{meeting:MeetingSession}) {
         onNew={() => setNewDialog(true)}
         onImport={() => file.current?.click()}
         onSave={saveFile}
+        notify={notify}
       />
       {playing && (
         <section className="play-shell">

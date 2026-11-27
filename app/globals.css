@@ -110,11 +110,14 @@ p {
   padding: 8px 16px;
   font-size: 12px;
 }
+.fullscreen-toggle,
+.file-actions {
+  color: #666;
+}
 .file-actions {
   display: flex;
   margin-left: auto;
   gap: 16px;
-  color: #666;
 }
 .workspace {
   display: grid;
@@ -1801,10 +1804,22 @@ p {
 .header-tools {
   display: contents;
 }
-.language-switch {
+.display-tools {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.fullscreen-toggle {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+.language-switch {
   display: flex;
   align-items: center;
   gap: 0;

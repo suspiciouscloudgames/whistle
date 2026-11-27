@@ -1,6 +1,7 @@
 "use client";
 import type { RefObject } from "react";
 import { useLanguage } from "./Language";
+import { FullscreenButton } from "./FullscreenButton";
 
 type Props = {
   playing: boolean;
@@ -15,10 +16,11 @@ type Props = {
   onNew: () => void;
   onImport: () => void;
   onSave: () => void;
+  notify: (message: string) => void;
 };
 
 export function EditorToolbar({
-  playing, saveStatus, onlineCount, multiplayerEnabled, onToggleMultiplayer, connectionStatus, makeButton, onEnter, onExit, onNew, onImport, onSave,
+  playing, saveStatus, onlineCount, multiplayerEnabled, onToggleMultiplayer, connectionStatus, makeButton, onEnter, onExit, onNew, onImport, onSave, notify,
 }: Props) {
   const { language, setLanguage, t } = useLanguage();
   const count = multiplayerEnabled ? onlineCount : 1;
@@ -60,24 +62,27 @@ export function EditorToolbar({
         </button>
       </nav>
       <div className="header-tools">
-        <div className="language-switch" role="group" aria-label={t("언어")}>
-          <button
-            lang="ko"
-            aria-label="한국어"
-            aria-pressed={language === "ko"}
-            onClick={() => setLanguage("ko")}
-          >
-            KO
-          </button>
-          <span aria-hidden="true">/</span>
-          <button
-            lang="en"
-            aria-label="English"
-            aria-pressed={language === "en"}
-            onClick={() => setLanguage("en")}
-          >
-            EN
-          </button>
+        <div className="display-tools">
+          <div className="language-switch" role="group" aria-label={t("언어")}>
+            <button
+              lang="ko"
+              aria-label="한국어"
+              aria-pressed={language === "ko"}
+              onClick={() => setLanguage("ko")}
+            >
+              KO
+            </button>
+            <span aria-hidden="true">/</span>
+            <button
+              lang="en"
+              aria-label="English"
+              aria-pressed={language === "en"}
+              onClick={() => setLanguage("en")}
+            >
+              EN
+            </button>
+          </div>
+          <FullscreenButton notify={notify} />
         </div>
         <div className="file-actions">
           <button onClick={onNew}>{t("다시 시작")}</button>

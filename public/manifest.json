@@ -1,0 +1,6 @@
+{
+  "name": "Whistle",
+  "short_name": "Whistle",
+  "display": "standalone",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
